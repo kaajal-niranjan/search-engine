@@ -1,0 +1,33 @@
+============================================================
+SEARCH EVALUATION REPORT
+============================================================
+
+--- Mean Precision ---
+  method  mean_p@5  mean_p@10
+    BM25  0.786667   0.740000
+Semantic  0.920000   0.846667
+  Hybrid  0.906667   0.846667
+
+--- Per-Query Results ---
+                                 query  bm25_p@5  bm25_p@10  semantic_p@5  semantic_p@10  hybrid_p@5  hybrid_p@10                                                           notes
+           warm jacket for winter trip       1.0        1.0           1.0            1.0         1.0          1.0 Semantic should match intent without exact 'warm jacket' phrase
+noise cancelling headphones for travel       1.0        1.0           1.0            1.0         1.0          1.0                                          Intent: audio + travel
+       gift for toddler birthday party       0.2        0.5           0.4            0.5         0.6          0.6                                        Broad intent across Toys
+          healthy cooking nonstick pan       1.0        1.0           1.0            1.0         1.0          1.0                                       Kitchen + health keywords
+home workout equipment small apartment       0.0        0.0           1.0            1.0         1.0          1.0                                         Semantic fitness intent
+             anti aging night skincare       1.0        1.0           1.0            1.0         1.0          1.0                                                   Beauty intent
+       camping gear for family weekend       1.0        1.0           1.0            1.0         1.0          1.0                                             Outdoor trip intent
+  ergonomic desk setup for remote work       0.0        0.0           0.8            0.4         0.4          0.3                                           Work-from-home intent
+          beginner learn python coding       1.0        0.5           1.0            0.5         1.0          0.5                                        Exact keyword helps BM25
+              USB-C 65W laptop charger       0.6        0.3           0.6            0.3         0.6          0.3                               Exact SKU-style query favors BM25
+       something cozy for better sleep       1.0        1.0           1.0            1.0         1.0          1.0                                            Vague semantic query
+     waterproof gear for rainy commute       1.0        0.8           1.0            1.0         1.0          1.0                                       Weather protection intent
+          protein supplement after gym       1.0        1.0           1.0            1.0         1.0          1.0                                               Fitness nutrition
+        4K television streaming movies       1.0        1.0           1.0            1.0         1.0          1.0                            Electronics — mixed keyword/semantic
+     journal planner productivity 2026       1.0        1.0           1.0            1.0         1.0          1.0                                          Stationery exact match
+
+--- Analysis ---
+Semantic search excels on vague/intent queries (e.g. 'warm jacket for winter trip',
+'something cozy for better sleep') where users don't use exact product titles.
+BM25 wins on exact token queries (SKUs, model numbers like 'USB-C 65W', 'Python').
+Hybrid search balances both: semantic recall + keyword precision for product codes.

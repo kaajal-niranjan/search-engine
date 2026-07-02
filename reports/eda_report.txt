@@ -1,0 +1,56 @@
+============================================================
+EXPLORATORY DATA ANALYSIS REPORT
+============================================================
+
+Total products: 800
+Columns: ['id', 'title', 'description', 'category', 'price', 'rating', 'search_text']
+
+--- Missing Values ---
+id             0
+title          0
+description    0
+category       0
+price          0
+rating         0
+search_text    0
+
+--- Price Statistics ---
+count    800.000000
+mean     142.735550
+std      158.524622
+min        6.050000
+25%       38.432500
+50%       79.455000
+75%      191.455000
+max      894.420000
+
+--- Rating Statistics ---
+count    800.000000
+mean       4.169750
+std        0.474781
+min        2.700000
+25%        3.800000
+50%        4.200000
+75%        4.500000
+max        5.000000
+
+--- Category Distribution ---
+category
+Health & Wellness         117
+Beauty & Personal Care    113
+Sports & Outdoors         110
+Clothing                  108
+Books & Stationery         91
+Home & Kitchen             89
+Electronics                86
+Toys & Games               86
+
+--- Search Text Length (chars) ---
+count    800.000000
+mean     146.373750
+std       16.113849
+min      112.000000
+25%      134.000000
+50%      144.000000
+75%      159.000000
+max      202.000000
