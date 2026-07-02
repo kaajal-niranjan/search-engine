@@ -93,7 +93,7 @@ class ProductClusterer:
         plt.colorbar(scatter, ax=ax, label="Cluster")
         ax.grid(True, alpha=0.2)
 
-        # Annotate cluster centroids with dominant category
+        # Annotate cluster centroids with dominant category.
         for cluster_id in range(self.n_clusters):
             mask = labels == cluster_id
             if not mask.any():
