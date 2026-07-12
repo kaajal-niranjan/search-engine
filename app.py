@@ -12,6 +12,15 @@ import streamlit as st
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.auth import is_valid_email, verify_credentials
+from src.notifications import (
+    inject_toast_styles,
+    queue_toast,
+    show_pending_toasts,
+    toast_error,
+    toast_success,
+    toast_warning,
+)
 from src.bm25_search import KeywordSearch
 from src.clustering import ProductClusterer
 from src.config import (
@@ -22,7 +31,7 @@ from src.config import (
     EVALUATION_CSV_PATH,
 )
 from src.embedding_generator import EmbeddingGenerator
-from src.hybrid_search import HybridSearch
+from src.hybrid_search import ExplainableSearchResponse, HybridSearch
 from src.recommender import ProductRecommender
 from src.vector_search import SearchResult, VectorSearch
 
@@ -33,6 +42,106 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+inject_toast_styles()
+
+
+def init_auth_state() -> None:
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+    if "user_email" not in st.session_state:
+        st.session_state.user_email = None
+
+
+def clear_app_state() -> None:
+    """Reset search-related session data on logout."""
+    for key in (
+        "search_results",
+        "search_query",
+        "search_breakdown",
+        "query_intent",
+        "recommended_mode",
+    ):
+        st.session_state.pop(key, None)
+
+
+def logout() -> None:
+    st.session_state.authenticated = False
+    st.session_state.user_email = None
+    clear_app_state()
+    queue_toast("You have been logged out.", "info")
+    st.rerun()
+
+
+def login_page() -> None:
+    """Default route — email/password login gate."""
+    st.markdown(
+        """
+        <style>
+        [data-testid="stSidebar"] { display: none; }
+        [data-testid="stSidebarCollapsedControl"] { display: none; }
+        .login-wrap {
+            max-width: 420px;
+            margin: 4rem auto 1rem auto;
+            padding: 2rem 2rem 1.5rem 2rem;
+            border: 1px solid rgba(49, 51, 63, 0.2);
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.03);
+        }
+        .login-title {
+            text-align: center;
+            margin-bottom: 0.25rem;
+        }
+        .login-subtitle {
+            text-align: center;
+            color: rgba(49, 51, 63, 0.7);
+            margin-bottom: 1.5rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    _spacer, center, _spacer2 = st.columns([1, 1.2, 1])
+    with center:
+        st.markdown('<p class="login-title"><h2>🔍 Sign in</h2></p>', unsafe_allow_html=True)
+        st.markdown(
+            '<p class="login-subtitle">Semantic Product Search Engine</p>',
+            unsafe_allow_html=True,
+        )
+
+        with st.form("login_form", clear_on_submit=False):
+            email = st.text_input("Email", placeholder="you@company.com")
+            password = st.text_input("Password", type="password", placeholder="Enter your password")
+            submitted = st.form_submit_button("Log in", type="primary", use_container_width=True)
+
+        if submitted:
+            email_value = email.strip()
+            if not email_value or not password:
+                toast_error("Please enter both email and password.")
+            elif not is_valid_email(email_value):
+                toast_error("Please enter a valid email address.")
+            elif verify_credentials(email_value, password):
+                st.session_state.authenticated = True
+                st.session_state.user_email = email_value.lower()
+                queue_toast(f"Welcome back, {email_value.lower()}!", "success")
+                st.rerun()
+            else:
+                toast_error("Invalid email or password.")
+
+        st.caption("Enter your registered email and password to continue.")
+
+
+def render_app_header() -> None:
+    """Top header with app title and logout button."""
+    left, mid, right = st.columns([3, 2, 1])
+    with left:
+        st.markdown("### 🔍 Semantic Product Search")
+    with mid:
+        st.caption(f"Signed in as **{st.session_state.user_email}**")
+    with right:
+        if st.button("Log out", type="secondary", use_container_width=True):
+            logout()
+    st.divider()
 
 @st.cache_resource(show_spinner="Loading search engine…")
 def load_search_stack() -> tuple[VectorSearch, KeywordSearch, HybridSearch, ProductRecommender, pd.DataFrame]:
@@ -83,20 +192,29 @@ def run_search(
     vector: VectorSearch,
     keyword: KeywordSearch,
     hybrid: HybridSearch,
-) -> list[SearchResult]:
-    """Execute search for the selected mode."""
+    auto_intent: bool = True,
+) -> tuple[list[SearchResult], ExplainableSearchResponse | None]:
+    """Execute search for the selected mode; Hybrid returns explainable breakdown."""
     if mode == "Semantic":
-        return vector.search(query, top_k=top_k, **filters)
+        return vector.search(query, top_k=top_k, **filters), None
     if mode == "BM25":
-        return keyword.search(query, top_k=top_k, **filters)
+        return keyword.search(query, top_k=top_k, **filters), None
 
     hybrid.semantic_weight = sem_w
     hybrid.bm25_weight = 1.0 - sem_w
-    return hybrid.search(query, top_k=top_k, **filters)
+    response = hybrid.search_with_explanation(
+        query, top_k=top_k, auto_category_boost=auto_intent, **filters
+    )
+    return response.results, response
 
 
-def render_product_card(result: SearchResult, rank: int) -> None:
-    """Display a single search result card."""
+def render_product_card(
+    result: SearchResult,
+    rank: int,
+    breakdown: dict | None = None,
+    show_explanation: bool = False,
+) -> None:
+    """Display a single search result card with optional score breakdown."""
     with st.container(border=True):
         cols = st.columns([3, 1])
         with cols[0]:
@@ -107,6 +225,32 @@ def render_product_card(result: SearchResult, rank: int) -> None:
         with cols[1]:
             st.metric("Price", f"${result.price:.2f}")
             st.metric("Score", f"{result.score:.3f}")
+
+        if show_explanation and breakdown and result.product_id in breakdown:
+            bd = breakdown[result.product_id]
+            with st.expander("Why this result?"):
+                st.caption(bd.summary())
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.write("**Semantic**")
+                    if bd.semantic_rank:
+                        st.progress(
+                            min(1.0, bd.semantic_contribution / max(result.score, 0.001)),
+                            text=f"Rank #{bd.semantic_rank}",
+                        )
+                    else:
+                        st.caption("Not in semantic top results")
+                with c2:
+                    st.write("**Keywords (BM25)**")
+                    if bd.bm25_rank:
+                        st.progress(
+                            min(1.0, bd.bm25_contribution / max(result.score, 0.001)),
+                            text=f"Rank #{bd.bm25_rank}",
+                        )
+                    else:
+                        st.caption("Not in keyword top results")
+                if bd.matched_signals:
+                    st.caption(f"Matched signals: {', '.join(bd.matched_signals)}")
 
 
 def search_page(
@@ -127,6 +271,11 @@ def search_page(
         top_k = st.slider("Results (top-k)", 3, 20, 10)
         sem_w = st.slider("Semantic weight", 0.0, 1.0, DEFAULT_SEMANTIC_WEIGHT, 0.05)
         st.caption(f"BM25 weight: {1.0 - sem_w:.2f}")
+
+        st.divider()
+        st.header("Smart Search")
+        show_explanation = st.checkbox("Show result explanations", value=True)
+        auto_intent = st.checkbox("Auto category boost from query intent", value=True)
 
         st.divider()
         st.header("Filters")
@@ -188,13 +337,36 @@ def search_page(
             min_rating=min_rating if min_rating > 0 else None,
         )
         with st.spinner("Searching…"):
-            results = run_search(
-                query.strip(), mode, top_k, sem_w, filters, vector, keyword, hybrid
+            results, explainable = run_search(
+                query.strip(), mode, top_k, sem_w, filters, vector, keyword, hybrid, auto_intent
             )
         st.session_state["search_results"] = results
         st.session_state["search_query"] = query.strip()
+        st.session_state["search_breakdown"] = (
+            explainable.breakdowns if explainable else {}
+        )
+        st.session_state["query_intent"] = explainable.intent if explainable else None
+        st.session_state["recommended_mode"] = (
+            explainable.recommended_mode if explainable else None
+        )
+        if results:
+            toast_success(f"Found {len(results)} result(s) for your search.")
+        else:
+            toast_warning("No products matched your query and filters.")
+    elif submitted and not query.strip():
+        toast_warning("Please enter a search query.")
 
     results: list[SearchResult] = st.session_state.get("search_results", [])
+    breakdown = st.session_state.get("search_breakdown", {})
+    intent = st.session_state.get("query_intent")
+
+    if intent and intent.has_category_hint:
+        st.info(
+            f"**Detected intent:** likely **{intent.suggested_category}** "
+            f"(confidence {intent.confidence:.0%}) · "
+            f"signals: {', '.join(intent.matched_signals)} · "
+            f"suggested mode: **{st.session_state.get('recommended_mode', 'Hybrid')}**"
+        )
     if not results:
         st.info("Enter a query and click **Search** (filters apply on submit).")
         return
@@ -204,7 +376,11 @@ def search_page(
 
     st.subheader(f"Results ({len(results)})")
     for i, r in enumerate(results, 1):
-        render_product_card(r, i)
+        render_product_card(
+            r, i,
+            breakdown=breakdown,
+            show_explanation=show_explanation and mode == "Hybrid",
+        )
 
     st.divider()
     st.subheader("Similar Products")
@@ -235,6 +411,7 @@ def clusters_page() -> None:
                 clusterer = ProductClusterer()
                 clusterer.fit_predict()
                 clusterer.visualize()
+            queue_toast("Cluster visualization generated successfully.", "success")
             st.rerun()
 
 
@@ -275,6 +452,15 @@ def evaluation_page() -> None:
 
 
 def main() -> None:
+    init_auth_state()
+    show_pending_toasts()
+
+    if not st.session_state.authenticated:
+        login_page()
+        return
+
+    render_app_header()
+
     page = st.sidebar.radio(
         "Navigation",
         ["Search", "Clusters", "Evaluation"],
@@ -292,6 +478,7 @@ def main() -> None:
     try:
         vector, keyword, hybrid, recommender, catalog = load_search_stack()
     except Exception as exc:
+        toast_error("Failed to load search engine.")
         st.error(f"Failed to load search engine: {exc}")
         st.code("python scripts/run_pipeline.py")
         return
