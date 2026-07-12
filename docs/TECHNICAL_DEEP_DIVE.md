@@ -1,226 +1,135 @@
 # Technical Deep Dive — Codebase Review
 
-Prepared for the next-round technical discussion. Maps **modules**, auth, toasts, search, and talking points.
+Updated for the **current** app: login-gated **search-only** UI, file-based cluster/eval deliverables.
 
 ---
 
 ## Repository Map
 
-| Path | Purpose |
-|------|---------|
-| `app.py` | Streamlit UI: login gate, header, pages, toasts |
-| `src/auth.py` | Email/password with PBKDF2 salted hashes |
-| `src/notifications.py` | Toast queue + top-right CSS |
-| `src/config.py` | Paths and search/ML constants |
-| `src/preprocessing.py` | Synthetic catalog + cleaning |
-| `src/embedding_generator.py` | Sentence Transformer encoding |
+| Path | Role today |
+|------|------------|
+| `app.py` | Login, header, logout, search UI, toasts, recommendations |
+| `src/auth.py` | PBKDF2 login verification |
+| `src/notifications.py` | Top-right toasts |
+| `src/config.py` | Paths, model, hybrid defaults |
+| `src/preprocessing.py` | Catalog + `search_text` + EDA |
+| `src/embedding_generator.py` | Batch embeddings + query cache |
 | `src/vector_search.py` | FAISS semantic search |
 | `src/bm25_search.py` | BM25 keyword search |
-| `src/hybrid_search.py` | Fusion + explainability |
-| `src/query_intent.py` | Intent detection |
-| `src/search_explanation.py` | Score breakdown dataclass |
-| `src/recommender.py` | Content + co-occurrence recs |
-| `src/clustering.py` | KMeans + UMAP |
-| `src/evaluation.py` | Precision@k benchmark |
-| `scripts/run_pipeline.py` | Offline build |
-| `docs/` | Architecture, flow, scope, reports |
+| `src/hybrid_search.py` | Score fusion (+ optional explain API unused by UI) |
+| `src/query_intent.py` | Intent helpers (available; not shown in minimal UI) |
+| `src/search_explanation.py` | Score breakdown dataclass (library; not shown in UI) |
+| `src/recommender.py` | Similar products |
+| `src/clustering.py` | KMeans + UMAP → `visuals/` |
+| `src/evaluation.py` | P@k → `reports/` |
+| `scripts/run_pipeline.py` | Offline build of all artifacts |
+| `docs/` | Architecture, DFD, scope, this guide, etc. |
 
 ---
 
-## Module Deep Dive
+## UI vs Backend (Important for Reviewers)
 
-### `app.py` — Presentation + Auth Gate
-
-**Startup order:**
-
-1. `set_page_config`  
-2. `inject_toast_styles()`  
-3. `init_auth_state()`  
-4. `show_pending_toasts()`  
-5. If not authenticated → `login_page()` and return  
-6. Else → `render_app_header()` + sidebar navigation  
-
-**Protected pages:** Search, Clusters, Evaluation.
-
-**Caching:**
-
-| Decorator | What |
-|-----------|------|
-| `@st.cache_resource` | Search stack (model, indexes) |
-| `@st.cache_data` | Recommendations per product |
+| Capability | In Streamlit UI? | Still in codebase / files? |
+|------------|------------------|----------------------------|
+| Login / logout / toasts | Yes | Yes |
+| Hybrid / Semantic / BM25 | Yes | Yes |
+| Category / price / rating filters | Yes | Yes |
+| Product cards + similar products | Yes | Yes |
+| Cluster visualization | **No page** | Yes → `visuals/` via pipeline |
+| Evaluation table | **No page** | Yes → `reports/` via pipeline |
+| Score / “Why this result?” | **Removed from UI** | Explain API still in `hybrid_search` |
 
 ---
 
-### `src/auth.py` — Security
-
-| Function | Role |
-|----------|------|
-| `hash_password` | Create `salt:digest` for storage |
-| `_derive_hash` | PBKDF2-HMAC-SHA256 (100k iterations) |
-| `verify_credentials` | Hash typed password; compare digests |
-| `is_valid_email` | Basic email format check |
-
-**Talking point:** Passwords are not “decrypted.” Verification is one-way hash comparison. Plain passwords never appear in the login UI.
-
----
-
-### `src/notifications.py` — Toasts
-
-| Function | Role |
-|----------|------|
-| `inject_toast_styles` | Fixed top-right positioning |
-| `queue_toast` | Persist message across `st.rerun()` |
-| `show_pending_toasts` | Flush queue at app start |
-| `toast_success/error/warning/info` | Immediate `st.toast` |
-
-**Events wired in app:** login success/fail, logout, empty/successful search, cluster generate, engine load failure.
-
----
-
-### `src/config.py` — Single Source of Truth
-
-Paths (`DATA_DIR`, `EMBEDDINGS_DIR`, …), model name, hybrid weights (`0.7` / `0.3`), cluster and search defaults.
-
----
-
-### `src/preprocessing.py` — Data
-
-- Generate synthetic catalog  
-- Clean + `search_text`  
-- EDA report  
-
----
-
-### `src/embedding_generator.py` — Encoding
-
-| Method | Purpose |
-|--------|---------|
-| `generate()` | Batch encode products |
-| `encode_query()` | Query vector (LRU cached) |
-| `warmup()` | Pre-load model |
-
----
-
-### `src/vector_search.py` — Semantic Retrieval
-
-`SearchResult` dataclass; `IndexFlatIP`; filters after ANN; `search_with_vector` for hybrid.
-
-**Assumption:** FAISS row `i` ↔ catalog row `i`.
-
----
-
-### `src/bm25_search.py` — Keyword Retrieval
-
-Simple tokenizer; `BM25Okapi`; `argpartition` for top-k.
-
----
-
-### `src/hybrid_search.py` — Fusion
-
-| API | Returns |
-|-----|---------|
-| `search()` | `list[SearchResult]` (backward compatible) |
-| `search_with_explanation()` | `ExplainableSearchResponse` |
-
-Includes intent, optional category boost, and per-id `ScoreBreakdown`.
-
----
-
-### `src/query_intent.py` / `search_explanation.py`
-
-Intent: category, confidence, query type, recommended mode.  
-Explanation: semantic/BM25 ranks, contributions, `summary()`.
-
----
-
-### `src/recommender.py` / `clustering.py` / `evaluation.py`
-
-Recommendations (content + simulated co-occurrence), UMAP clusters, 15-query Precision@k eval.
-
----
-
-## Data Structures
+## `app.py` Flow
 
 ```
-SearchResult
-Recommendation
-QueryIntent
-ScoreBreakdown
-ExplainableSearchResponse
-EvalQuery
-Session: authenticated, user_email, search_*, _pending_toasts
+main()
+  → login_page() if not authenticated
+  → render_app_header()
+  → load_search_stack()
+  → search_page()
+       sidebar: mode + filters
+       form: query
+       empty submit → clear previous results
+       results → cards → similar products
 ```
+
+**Talking point:** Sidebar has no Clusters/Evaluation pages because the brief’s UI requirement is a search demo; cluster image and eval CSV are separate deliverables.
+
+---
+
+## Core Search Modules
+
+### Hybrid fusion (`hybrid_search.py`)
+
+Default: `0.7 * sem_norm + 0.3 * bm25_norm` after min-max normalization.
+
+### FAISS (`vector_search.py`)
+
+`IndexFlatIP` on L2-normalized vectors (= cosine). Filters applied post-retrieval.
+
+### BM25 (`bm25_search.py`)
+
+Okapi BM25 over `search_text`; same filters.
+
+### Recommender (`recommender.py`)
+
+Content similarity + simulated co-occurrence blend.
+
+---
+
+## Offline Deliverables Deep Dive
+
+### Clustering (`clustering.py`)
+
+- KMeans on embeddings  
+- UMAP 2D plot saved under `visuals/`  
+- Sanity-check that embeddings form neighborhoods  
+
+### Evaluation (`evaluation.py`)
+
+- 15 `EVAL_QUERIES`  
+- Precision@5 / @10 for BM25, Semantic, Hybrid  
+- Outputs CSV + text report  
+
+Review these files in the deep dive even though they are not sidebar pages.
 
 ---
 
 ## Interview Talking Points
 
-### Why login before search?
+1. **Why remove Clusters/Evaluation from the UI?**  
+   Brief: simple search UI. Deliverables = image + evaluation table in repo/reports.
 
-Demo access control; protects evaluation/search pages; mirrors product apps where search is behind auth.
+2. **Why hybrid 70/30?**  
+   Semantic wins on intent queries; BM25 rescues SKUs; reports show hybrid’s trade-off.
 
-### Why PBKDF2 instead of reversible encryption?
+3. **How passwords work?**  
+   Salted PBKDF2; compare hashes; never decrypt; never show password on UI.
 
-Security best practice: stores must not yield original passwords if leaked. Login = re-hash + compare.
+4. **Empty search bug fix?**  
+   Clearing the box and submitting clears `session_state` results so the previous query is not reused.
 
-### Why hybrid?
-
-Semantic wins on intent (high P@5); BM25 rescues SKUs; hybrid improves mixed queries (e.g. toddler gift).
-
-### Why FAISS IndexFlatIP?
-
-800 products → exact search is fine; swap to IVF/HNSW at millions.
-
-### What did recent enhancements add?
-
-1. Auth gate + logout  
-2. Hashed credentials (no password on UI)  
-3. Top-right toasts  
-4. Intent + explainable hybrid  
-
-### Weakest parts?
-
-No pytest suite; FAISS↔CSV coupling; synthetic data; demo user store.
+5. **Scale to millions?**  
+   Switch FAISS to IVF/HNSW; pre-filter metadata; serve embeddings separately.
 
 ---
 
-## Files to Review Live
+## Suggested Live Demo Path
 
-| Priority | File | Focus |
-|----------|------|-------|
-| 1 | `app.py` | Auth gate, header, toasts |
-| 2 | `src/auth.py` | Password hashing |
-| 3 | `src/hybrid_search.py` | Fusion + explainability |
-| 4 | `src/vector_search.py` | FAISS + filters |
-| 5 | `src/notifications.py` | Toast UX |
-| 6 | `src/evaluation.py` | Metrics |
+1. Login  
+2. Query: `warm jacket for winter trip` (Hybrid)  
+3. Switch mode to BM25 / Semantic and compare feel  
+4. Apply Clothing + price filter  
+5. Open Similar Products  
+6. Show `visuals/cluster_visualization.png` and `reports/evaluation_results.csv` from disk/docs  
 
 ---
 
-## Quick Verification
+## Quick Commands
 
 ```bash
 python scripts/run_pipeline.py
 streamlit run app.py
-# Login → Search → toast on success → Log out → back to login
 ```
-
-```python
-from src.auth import verify_credentials
-from src.query_intent import detect_query_intent
-print(verify_credentials("admin@valere.io", "<your-password>"))
-print(detect_query_intent("warm jacket for winter trip"))
-```
-
----
-
-## Likely Deep-Dive Questions
-
-1. How does route protection work without a real router?  
-2. How are passwords stored and verified?  
-3. How would you scale to 10M products?  
-4. How would you add OAuth / a real user DB?  
-5. How does explainability help trust?  
-6. How do queued toasts survive `st.rerun()`?
-
-Answers also live in `SCOPE_AND_IMPLEMENTATION.md`, `ENHANCEMENTS.md`, and `ENHANCEMENT_REPORT.md`.

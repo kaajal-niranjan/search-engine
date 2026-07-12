@@ -22,16 +22,13 @@ from src.notifications import (
     toast_warning,
 )
 from src.bm25_search import KeywordSearch
-from src.clustering import ProductClusterer
 from src.config import (
     CLEAN_CATALOG_PATH,
-    CLUSTER_PLOT_PATH,
-    DEFAULT_BM25_WEIGHT,
     DEFAULT_SEMANTIC_WEIGHT,
-    EVALUATION_CSV_PATH,
+    DEFAULT_TOP_K,
 )
 from src.embedding_generator import EmbeddingGenerator
-from src.hybrid_search import ExplainableSearchResponse, HybridSearch
+from src.hybrid_search import HybridSearch
 from src.recommender import ProductRecommender
 from src.vector_search import SearchResult, VectorSearch
 
@@ -45,6 +42,155 @@ st.set_page_config(
 inject_toast_styles()
 
 
+def inject_app_styles() -> None:
+    """Tighter spacing and alignment for the authenticated search UI."""
+    st.markdown(
+        """
+        <style>
+        /* Reduce default Streamlit vertical padding */
+        .block-container {
+            padding-top: 1rem !important;
+            padding-bottom: 1.5rem !important;
+            max-width: 1100px;
+        }
+
+        /* Compact sidebar */
+        section[data-testid="stSidebar"] .block-container {
+            padding-top: 1rem !important;
+        }
+        section[data-testid="stSidebar"] h2 {
+            font-size: 1.05rem !important;
+            margin-bottom: 0.35rem !important;
+        }
+        section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+            gap: 0.4rem !important;
+        }
+
+        /* Header: brand + signed-in on left; logout fixed at extreme top-right */
+        .app-header-marker { display: none; }
+        .logout-corner-marker { display: none; }
+        .app-brand {
+            font-size: 1.25rem;
+            font-weight: 650;
+            margin: 0 !important;
+            padding: 0 !important;
+            line-height: 2.25rem !important;
+            min-height: 2.25rem;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+        }
+        .app-user-text {
+            color: rgba(49, 51, 63, 0.7);
+            font-size: 0.9rem;
+            margin: 0 !important;
+            padding: 0 !important;
+            line-height: 2.25rem !important;
+            min-height: 2.25rem;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            white-space: nowrap;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.app-header-marker) {
+            align-items: center !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.app-header-marker) [data-testid="stMarkdownContainer"] p,
+        div[data-testid="stHorizontalBlock"]:has(.app-header-marker) [data-testid="stMarkdownContainer"] div {
+            margin: 0 !important;
+        }
+
+        /* Pin Log out to extreme top-right of the window */
+        div[data-testid="stHorizontalBlock"]:has(.logout-corner-marker) {
+            position: relative !important;
+            height: 0 !important;
+            min-height: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: visible !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.logout-corner-marker) > div {
+            height: 0 !important;
+            min-height: 0 !important;
+            overflow: visible !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.logout-corner-marker) > div:last-child {
+            position: static !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.logout-corner-marker) [data-testid="stButton"] {
+            position: fixed !important;
+            top: 0.35rem !important;
+            right: 0.5rem !important;
+            z-index: 1000001 !important;
+            width: auto !important;
+            margin: 0 !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.logout-corner-marker) [data-testid="stButton"] > button {
+            margin: 0 !important;
+            height: 2.25rem !important;
+            min-height: 2.25rem !important;
+            padding: 0 1rem !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            white-space: nowrap !important;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08) !important;
+        }
+        .app-tagline {
+            color: rgba(49, 51, 63, 0.75);
+            font-size: 0.95rem;
+            margin: 0 0 0.75rem 0;
+        }
+
+        /* Tighter main vertical stack */
+        div[data-testid="stVerticalBlock"] > div {
+            gap: 0.5rem;
+        }
+
+        /* Search form: input + button joined */
+        div[data-testid="stForm"] {
+            border: 1px solid rgba(49, 51, 63, 0.15);
+            border-radius: 0.5rem;
+            padding: 0.75rem 1rem 0.85rem 1rem;
+        }
+        div[data-testid="stForm"] div[data-testid="stHorizontalBlock"] {
+            align-items: flex-end !important;
+            gap: 0 !important;
+        }
+        div[data-testid="stForm"] div[data-testid="stHorizontalBlock"] > div:first-child input {
+            border-top-right-radius: 0 !important;
+            border-bottom-right-radius: 0 !important;
+            border-right: 0 !important;
+            height: 2.5rem;
+        }
+        div[data-testid="stForm"] div[data-testid="stHorizontalBlock"] > div:last-child button {
+            border-top-left-radius: 0 !important;
+            border-bottom-left-radius: 0 !important;
+            height: 2.5rem;
+            min-height: 2.5rem;
+            padding-left: 1.1rem;
+            padding-right: 1.1rem;
+        }
+        div[data-testid="stForm"] div[data-testid="stHorizontalBlock"] > div:last-child {
+            margin-top: 0 !important;
+        }
+
+        /* Product cards: less padding, price right-aligned */
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            margin-bottom: 0.35rem;
+        }
+        .product-price {
+            text-align: right;
+            font-size: 1.1rem;
+            font-weight: 650;
+            margin-top: 0.15rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def init_auth_state() -> None:
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
@@ -54,13 +200,7 @@ def init_auth_state() -> None:
 
 def clear_app_state() -> None:
     """Reset search-related session data on logout."""
-    for key in (
-        "search_results",
-        "search_query",
-        "search_breakdown",
-        "query_intent",
-        "recommended_mode",
-    ):
+    for key in ("search_results", "search_query"):
         st.session_state.pop(key, None)
 
 
@@ -68,6 +208,9 @@ def logout() -> None:
     st.session_state.authenticated = False
     st.session_state.user_email = None
     clear_app_state()
+    # Keep URL clean: http://localhost:8501 (no ?logout=1)
+    if "logout" in st.query_params:
+        del st.query_params["logout"]
     queue_toast("You have been logged out.", "info")
     st.rerun()
 
@@ -79,14 +222,6 @@ def login_page() -> None:
         <style>
         [data-testid="stSidebar"] { display: none; }
         [data-testid="stSidebarCollapsedControl"] { display: none; }
-        .login-wrap {
-            max-width: 420px;
-            margin: 4rem auto 1rem auto;
-            padding: 2rem 2rem 1.5rem 2rem;
-            border: 1px solid rgba(49, 51, 63, 0.2);
-            border-radius: 12px;
-            background: rgba(255, 255, 255, 0.03);
-        }
         .login-title {
             text-align: center;
             margin-bottom: 0.25rem;
@@ -96,10 +231,18 @@ def login_page() -> None:
             color: rgba(49, 51, 63, 0.7);
             margin-bottom: 1.5rem;
         }
+        .field-error {
+            color: #c62828;
+            font-size: 0.85rem;
+            margin: -0.35rem 0 0.75rem 0;
+        }
         </style>
         """,
         unsafe_allow_html=True,
     )
+
+    email_error = st.session_state.get("login_email_error", "")
+    password_error = st.session_state.get("login_password_error", "")
 
     _spacer, center, _spacer2 = st.columns([1, 1.2, 1])
     with center:
@@ -111,36 +254,77 @@ def login_page() -> None:
 
         with st.form("login_form", clear_on_submit=False):
             email = st.text_input("Email", placeholder="you@company.com")
+            if email_error:
+                st.markdown(f'<p class="field-error">{email_error}</p>', unsafe_allow_html=True)
+
             password = st.text_input("Password", type="password", placeholder="Enter your password")
+            if password_error:
+                st.markdown(f'<p class="field-error">{password_error}</p>', unsafe_allow_html=True)
+
             submitted = st.form_submit_button("Log in", type="primary", use_container_width=True)
 
         if submitted:
             email_value = email.strip()
-            if not email_value or not password:
-                toast_error("Please enter both email and password.")
+            st.session_state.login_email_error = ""
+            st.session_state.login_password_error = ""
+            has_field_error = False
+
+            if not email_value:
+                st.session_state.login_email_error = "Email is required."
+                has_field_error = True
             elif not is_valid_email(email_value):
-                toast_error("Please enter a valid email address.")
-            elif verify_credentials(email_value, password):
+                st.session_state.login_email_error = "Please enter a valid email address."
+                has_field_error = True
+
+            if not password:
+                st.session_state.login_password_error = "Password is required."
+                has_field_error = True
+
+            if has_field_error:
+                st.rerun()
+
+            if verify_credentials(email_value, password):
                 st.session_state.authenticated = True
                 st.session_state.user_email = email_value.lower()
+                st.session_state.login_email_error = ""
+                st.session_state.login_password_error = ""
                 queue_toast(f"Welcome back, {email_value.lower()}!", "success")
                 st.rerun()
-            else:
-                toast_error("Invalid email or password.")
+
+            # Auth failed after fields are filled — toast on submit is OK
+            st.session_state.login_email_error = ""
+            st.session_state.login_password_error = ""
+            toast_error("Invalid email or password.")
 
         st.caption("Enter your registered email and password to continue.")
 
 
 def render_app_header() -> None:
-    """Top header with app title and logout button."""
-    left, mid, right = st.columns([3, 2, 1])
-    with left:
-        st.markdown("### 🔍 Semantic Product Search")
-    with mid:
-        st.caption(f"Signed in as **{st.session_state.user_email}**")
-    with right:
-        if st.button("Log out", type="secondary", use_container_width=True):
+    """Brand + signed-in text in content; Log out fixed at extreme top-right."""
+    if "logout" in st.query_params:
+        del st.query_params["logout"]
+
+    email = st.session_state.user_email or ""
+
+    # Invisible layout row — button is CSS-fixed to top-right corner
+    _spacer, logout_col = st.columns([20, 1])
+    with logout_col:
+        st.markdown('<span class="logout-corner-marker"></span>', unsafe_allow_html=True)
+        if st.button("Log out", type="secondary", key="header_logout"):
             logout()
+
+    brand_col, user_col = st.columns([3, 2.5], vertical_alignment="center")
+    with brand_col:
+        st.markdown(
+            '<span class="app-header-marker"></span>'
+            '<div class="app-brand">🔍 Semantic Product Search</div>',
+            unsafe_allow_html=True,
+        )
+    with user_col:
+        st.markdown(
+            f'<div class="app-user-text">Signed in as&nbsp;<strong>{email}</strong></div>',
+            unsafe_allow_html=True,
+        )
     st.divider()
 
 @st.cache_resource(show_spinner="Loading search engine…")
@@ -192,65 +376,32 @@ def run_search(
     vector: VectorSearch,
     keyword: KeywordSearch,
     hybrid: HybridSearch,
-    auto_intent: bool = True,
-) -> tuple[list[SearchResult], ExplainableSearchResponse | None]:
-    """Execute search for the selected mode; Hybrid returns explainable breakdown."""
+) -> list[SearchResult]:
+    """Execute search for the selected mode."""
     if mode == "Semantic":
-        return vector.search(query, top_k=top_k, **filters), None
+        return vector.search(query, top_k=top_k, **filters)
     if mode == "BM25":
-        return keyword.search(query, top_k=top_k, **filters), None
+        return keyword.search(query, top_k=top_k, **filters)
 
     hybrid.semantic_weight = sem_w
     hybrid.bm25_weight = 1.0 - sem_w
-    response = hybrid.search_with_explanation(
-        query, top_k=top_k, auto_category_boost=auto_intent, **filters
-    )
-    return response.results, response
+    return hybrid.search(query, top_k=top_k, **filters)
 
 
-def render_product_card(
-    result: SearchResult,
-    rank: int,
-    breakdown: dict | None = None,
-    show_explanation: bool = False,
-) -> None:
-    """Display a single search result card with optional score breakdown."""
+def render_product_card(result: SearchResult, rank: int) -> None:
+    """Display a simple product card (title, category, rating, description, price)."""
     with st.container(border=True):
-        cols = st.columns([3, 1])
+        cols = st.columns([5, 1], vertical_alignment="top")
         with cols[0]:
             st.markdown(f"**#{rank} · {result.title}**")
             st.caption(f"{result.category} · ⭐ {result.rating:.1f}")
             desc = result.description
-            st.write(desc[:200] + ("..." if len(desc) > 200 else ""))
+            st.caption(desc[:180] + ("..." if len(desc) > 180 else ""))
         with cols[1]:
-            st.metric("Price", f"${result.price:.2f}")
-            st.metric("Score", f"{result.score:.3f}")
-
-        if show_explanation and breakdown and result.product_id in breakdown:
-            bd = breakdown[result.product_id]
-            with st.expander("Why this result?"):
-                st.caption(bd.summary())
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.write("**Semantic**")
-                    if bd.semantic_rank:
-                        st.progress(
-                            min(1.0, bd.semantic_contribution / max(result.score, 0.001)),
-                            text=f"Rank #{bd.semantic_rank}",
-                        )
-                    else:
-                        st.caption("Not in semantic top results")
-                with c2:
-                    st.write("**Keywords (BM25)**")
-                    if bd.bm25_rank:
-                        st.progress(
-                            min(1.0, bd.bm25_contribution / max(result.score, 0.001)),
-                            text=f"Rank #{bd.bm25_rank}",
-                        )
-                    else:
-                        st.caption("Not in keyword top results")
-                if bd.matched_signals:
-                    st.caption(f"Matched signals: {', '.join(bd.matched_signals)}")
+            st.markdown(
+                f'<p class="product-price">${result.price:.2f}</p>',
+                unsafe_allow_html=True,
+            )
 
 
 def search_page(
@@ -259,26 +410,27 @@ def search_page(
     hybrid: HybridSearch,
     catalog: pd.DataFrame,
 ) -> None:
-    st.title("🔍 Semantic Product Search")
-    st.markdown("Search by **meaning**, not just keywords. Try: *warm jacket for winter trip*")
+    # Brand already in header — keep a short tagline only (no duplicate title)
+    st.markdown(
+        '<p class="app-tagline">Search by <strong>meaning</strong>, not just keywords. '
+        "Try: <em>warm jacket for winter trip</em></p>",
+        unsafe_allow_html=True,
+    )
 
     price_floor = float(catalog["price"].min())
     price_ceil = float(catalog["price"].max())
 
     with st.sidebar:
-        st.header("Search Settings")
-        mode = st.radio("Search mode", ["Hybrid", "Semantic", "BM25"], index=0)
-        top_k = st.slider("Results (top-k)", 3, 20, 10)
-        sem_w = st.slider("Semantic weight", 0.0, 1.0, DEFAULT_SEMANTIC_WEIGHT, 0.05)
-        st.caption(f"BM25 weight: {1.0 - sem_w:.2f}")
+        st.markdown("**Search**")
+        mode = st.radio(
+            "Mode",
+            ["Hybrid", "Semantic", "BM25"],
+            index=0,
+            help="Hybrid blends meaning + keywords. Semantic = meaning only. BM25 = keywords only.",
+        )
 
-        st.divider()
-        st.header("Smart Search")
-        show_explanation = st.checkbox("Show result explanations", value=True)
-        auto_intent = st.checkbox("Auto category boost from query intent", value=True)
-
-        st.divider()
-        st.header("Filters")
+        st.markdown("---")
+        st.markdown("**Filters**")
         categories = ["All"] + sorted(catalog["category"].unique().tolist())
         category = st.selectbox("Category", categories)
         price_min, price_max = st.slider(
@@ -286,49 +438,26 @@ def search_page(
         )
         min_rating = st.slider("Minimum rating", 0.0, 5.0, 0.0, 0.5)
 
-    st.markdown(
-        """
-        <style>
-        /* Inline search: input and button on one row, visually joined */
-        div[data-testid="stForm"] div[data-testid="stHorizontalBlock"] {
-            align-items: flex-end;
-            gap: 0 !important;
-        }
-        div[data-testid="stForm"] div[data-testid="stHorizontalBlock"] > div:first-child input {
-            border-top-right-radius: 0 !important;
-            border-bottom-right-radius: 0 !important;
-            border-right: 0 !important;
-            height: 2.75rem;
-        }
-        div[data-testid="stForm"] div[data-testid="stHorizontalBlock"] > div:last-child button {
-            border-top-left-radius: 0 !important;
-            border-bottom-left-radius: 0 !important;
-            height: 2.75rem;
-            min-height: 2.75rem;
-            padding-left: 1.25rem;
-            padding-right: 1.25rem;
-        }
-        div[data-testid="stForm"] div[data-testid="stHorizontalBlock"] > div:last-child {
-            margin-top: 0 !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    # Fixed defaults (weights justified in reports; keeps UI minimal)
+    top_k = DEFAULT_TOP_K
+    sem_w = DEFAULT_SEMANTIC_WEIGHT
 
     with st.form("search_form", clear_on_submit=False):
-        st.markdown("**Search query**")
         input_col, btn_col = st.columns([8, 1], gap="small", vertical_alignment="bottom")
         with input_col:
             query = st.text_input(
                 "Search query",
                 placeholder="e.g. cozy bedding for better sleep",
                 label_visibility="collapsed",
+                key="search_query_input",
             )
         with btn_col:
             submitted = st.form_submit_button("Search", type="primary", use_container_width=True)
 
-    if submitted and query.strip():
+    # Always use the value submitted from the input (including empty string)
+    submitted_query = (query or "").strip()
+
+    if submitted and submitted_query:
         cat_filter = None if category == "All" else category
         filters = dict(
             category=cat_filter,
@@ -337,53 +466,36 @@ def search_page(
             min_rating=min_rating if min_rating > 0 else None,
         )
         with st.spinner("Searching…"):
-            results, explainable = run_search(
-                query.strip(), mode, top_k, sem_w, filters, vector, keyword, hybrid, auto_intent
+            results = run_search(
+                submitted_query, mode, top_k, sem_w, filters, vector, keyword, hybrid
             )
         st.session_state["search_results"] = results
-        st.session_state["search_query"] = query.strip()
-        st.session_state["search_breakdown"] = (
-            explainable.breakdowns if explainable else {}
-        )
-        st.session_state["query_intent"] = explainable.intent if explainable else None
-        st.session_state["recommended_mode"] = (
-            explainable.recommended_mode if explainable else None
-        )
+        st.session_state["search_query"] = submitted_query
         if results:
             toast_success(f"Found {len(results)} result(s) for your search.")
         else:
             toast_warning("No products matched your query and filters.")
-    elif submitted and not query.strip():
+    elif submitted and not submitted_query:
+        # Empty search must clear previous results — do not keep old query/results
+        for key in ("search_results", "search_query"):
+            st.session_state.pop(key, None)
         toast_warning("Please enter a search query.")
 
     results: list[SearchResult] = st.session_state.get("search_results", [])
-    breakdown = st.session_state.get("search_breakdown", {})
-    intent = st.session_state.get("query_intent")
 
-    if intent and intent.has_category_hint:
-        st.info(
-            f"**Detected intent:** likely **{intent.suggested_category}** "
-            f"(confidence {intent.confidence:.0%}) · "
-            f"signals: {', '.join(intent.matched_signals)} · "
-            f"suggested mode: **{st.session_state.get('recommended_mode', 'Hybrid')}**"
-        )
     if not results:
-        st.info("Enter a query and click **Search** (filters apply on submit).")
+        st.caption("Enter a query and click **Search**. Filters apply when you search.")
         return
 
     if "search_query" in st.session_state:
         st.caption(f"Showing results for: *{st.session_state['search_query']}*")
 
-    st.subheader(f"Results ({len(results)})")
+    st.markdown(f"**Results ({len(results)})**")
     for i, r in enumerate(results, 1):
-        render_product_card(
-            r, i,
-            breakdown=breakdown,
-            show_explanation=show_explanation and mode == "Hybrid",
-        )
+        render_product_card(r, i)
 
-    st.divider()
-    st.subheader("Similar Products")
+    st.markdown("---")
+    st.markdown("**Similar Products**")
     anchor_id = st.selectbox(
         "Pick a result to see recommendations",
         options=[r.product_id for r in results],
@@ -393,87 +505,30 @@ def search_page(
         recs = get_recommendations(int(anchor_id))
         for rec in recs:
             with st.container(border=True):
-                st.markdown(f"**{rec['title']}** · {rec['category']}")
-                st.caption(f"Score: {rec['score']:.3f} · {rec['reason']}")
-                st.write(f"${rec['price']:.2f} · ⭐ {rec['rating']:.1f}")
-
-
-def clusters_page() -> None:
-    st.title("📊 Embedding Clusters")
-    st.markdown("UMAP projection of product embeddings colored by KMeans cluster.")
-
-    if CLUSTER_PLOT_PATH.exists():
-        st.image(str(CLUSTER_PLOT_PATH), use_container_width=True)
-    else:
-        st.warning("Cluster plot not found. Run `python scripts/run_pipeline.py` first.")
-        if st.button("Generate clusters now"):
-            with st.spinner("Generating clusters…"):
-                clusterer = ProductClusterer()
-                clusterer.fit_predict()
-                clusterer.visualize()
-            queue_toast("Cluster visualization generated successfully.", "success")
-            st.rerun()
-
-
-def evaluation_page() -> None:
-    st.title("📈 Search Evaluation")
-    st.markdown("Precision@5 and Precision@10 comparing BM25, semantic, and hybrid search.")
-
-    if EVALUATION_CSV_PATH.exists():
-        df = pd.read_csv(EVALUATION_CSV_PATH)
-        st.dataframe(df, use_container_width=True)
-
-        summary = pd.DataFrame(
-            {
-                "Method": ["BM25", "Semantic", "Hybrid"],
-                "Mean P@5": [df["bm25_p@5"].mean(), df["semantic_p@5"].mean(), df["hybrid_p@5"].mean()],
-                "Mean P@10": [
-                    df["bm25_p@10"].mean(),
-                    df["semantic_p@10"].mean(),
-                    df["hybrid_p@10"].mean(),
-                ],
-            }
-        )
-        st.subheader("Summary")
-        st.table(summary)
-
-        st.subheader("When does each method win?")
-        st.markdown(
-            """
-            | Scenario | Best method | Example |
-            |----------|-------------|---------|
-            | Vague intent / natural language | **Semantic** | "warm jacket for winter trip" |
-            | Exact SKU / model numbers | **BM25** | "USB-C 65W laptop charger" |
-            | Mixed queries | **Hybrid** | "4K television streaming movies" |
-            """
-        )
-    else:
-        st.warning("Evaluation not run yet. Execute `python scripts/run_pipeline.py`.")
+                left, right = st.columns([5, 1], vertical_alignment="center")
+                with left:
+                    st.markdown(f"**{rec['title']}**")
+                    st.caption(f"{rec['category']} · ⭐ {rec['rating']:.1f}")
+                with right:
+                    st.markdown(
+                        f'<p class="product-price">${rec["price"]:.2f}</p>',
+                        unsafe_allow_html=True,
+                    )
 
 
 def main() -> None:
     init_auth_state()
+    # Always prefer a clean base URL (no ?logout=1)
+    if "logout" in st.query_params:
+        del st.query_params["logout"]
     show_pending_toasts()
 
     if not st.session_state.authenticated:
         login_page()
         return
 
+    inject_app_styles()
     render_app_header()
-
-    page = st.sidebar.radio(
-        "Navigation",
-        ["Search", "Clusters", "Evaluation"],
-        label_visibility="collapsed",
-    )
-
-    if page == "Clusters":
-        clusters_page()
-        return
-
-    if page == "Evaluation":
-        evaluation_page()
-        return
 
     try:
         vector, keyword, hybrid, recommender, catalog = load_search_stack()

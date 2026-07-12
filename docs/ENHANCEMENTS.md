@@ -1,98 +1,65 @@
 # Proposed Enhancements
 
-Future improvements, ordered by impact. Includes what is **already done**.
+Future work and what is already done in the **current** codebase.
 
 ---
 
 ## Already Implemented
 
-| Enhancement | Status | Where |
-|-------------|--------|-------|
-| Query intent detection | ✅ | `src/query_intent.py` |
-| Explainable hybrid search | ✅ | `src/hybrid_search.py`, `search_explanation.py` |
-| Category soft-boost from intent | ✅ | `search_with_explanation()` |
-| Login + route protection | ✅ | `app.py`, `src/auth.py` |
-| Logout in header | ✅ | `render_app_header()` |
-| Salted password hashing (PBKDF2) | ✅ | `src/auth.py` |
-| Toast notifications (top-right) | ✅ | `src/notifications.py` |
+| Item | Notes |
+|------|--------|
+| Semantic + BM25 + Hybrid | Core brief Tasks 2–3 |
+| Filters (category, price, rating) | Task 3 |
+| Recommendations + co-occurrence | Task 4 |
+| Clustering + UMAP file | Task 4 deliverable via pipeline |
+| Evaluation P@k + comparison write-up | Task 5 deliverable via pipeline/reports |
+| Login + logout + hashed passwords | Extra UX/security |
+| Toast notifications | Extra UX |
+| Minimal search-only UI | Matches “simple Streamlit search UI” |
+| Empty-query clears old results | Bugfix |
 
-Details: `docs/ENHANCEMENT_REPORT.md`.
-
----
-
-## Tier 1 — High Impact
-
-### 1. REST API (FastAPI)
-
-Expose `/search`, `/recommendations`, `/health` for integrations.
-
-### 2. Reciprocal Rank Fusion (RRF)
-
-Replace or complement min-max score blending with rank-based fusion.
-
-### 3. Pre-filtering indexes
-
-Metadata-aware retrieval so heavy filters still return full top_k.
-
-### 4. Automated tests (pytest)
-
-Auth verify, hybrid fusion, intent detection, toast queue helpers.
+Library modules still present (not emphasized in UI): `query_intent.py`, `search_explanation.py`, `search_with_explanation()`.
 
 ---
 
-## Tier 2 — Production Readiness
+## Tier 1 — High Impact Next
 
-### 5. Docker + CI/CD
+1. **REST API (FastAPI)** — integrate search into other apps  
+2. **pytest suite** — auth, hybrid fusion, filters, empty-query behavior  
+3. **RRF fusion** — alternative to min-max score blending  
+4. **Pre-filtered indexes** — better filter recall at scale  
 
-Reproducible runs and quality gates.
+---
 
-### 6. Environment / secrets config
+## Tier 2 — Production
 
-Move model paths and user stores out of code (Streamlit secrets / `.env`).
-
-### 7. Real user store
-
-SQLite/Postgres users; registration; password reset; lockout.
-
-### 8. Incremental index updates
-
-Add/update products without full re-embed.
+5. Docker + CI  
+6. Secrets / env-based config and real user store  
+7. Incremental embedding updates  
 
 ---
 
 ## Tier 3 — Advanced ML
 
-### 9. Cross-encoder re-ranking
-
-Hybrid top-30 → cross-encoder → final top-10.
-
-### 10. Learning-to-rank
-
-Data-driven weights from clicks.
-
-### 11. Real behavioral recommendations
-
-Replace simulated co-occurrence.
+8. Cross-encoder re-rank  
+9. Learning-to-rank from clicks  
+10. Real behavioral recommendations  
 
 ---
 
-## Tier 4 — UX & Observability
+## Optional UI Enhancements (only if needed)
 
-### 12. Search analytics
+- Re-add read-only Clusters / Evaluation **pages** for live demos  
+- Optional “advanced” panel for hybrid weight / top-k  
 
-Query logs, CTR, zero-result rate.
-
-### 13. A/B testing of rankers
-
-### 14. Multilingual embeddings
+Not required by the written brief if file deliverables exist.
 
 ---
 
-## Recommended Roadmap
+## Roadmap Snapshot
 
 ```
-Phase 1  → pytest + secrets-based users + Docker
-Phase 2  → FastAPI + RRF + pre-filtering
-Phase 3  → Cross-encoder + analytics
-Phase 4  → Real catalog / behavior / LTR
+Now     → Minimal search UI + full offline deliverables
+Next    → Tests + API + Docker
+Later   → Re-rankers + real data
 ```

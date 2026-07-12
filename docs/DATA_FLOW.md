@@ -1,238 +1,201 @@
 # Data Flow Diagram — Semantic Product Search Engine
 
-This document traces **how data moves** through login, search, notifications, and the offline pipeline.
+How data moves today: **login → search → recommendations**, plus the **offline pipeline** for clusters and evaluation files.
 
 ---
 
-## Overview: Three Main Flows
+## Overview: Three Flows
 
-1. **Auth flow** — Login / logout / route protection  
-2. **Offline flow** — Build catalog, embeddings, indexes (run once)  
-3. **Online flow** — Authenticated user searches and gets results  
+1. **Auth flow** — login / logout / route protection  
+2. **Online search flow** — query → ranked products → similar items  
+3. **Offline pipeline** — catalog, embeddings, FAISS, clusters, evaluation reports  
 
 ---
 
 ## 1. Authentication Data Flow
 
-**Trigger:** User opens the app (`streamlit run app.py`)
-
 ```mermaid
 flowchart TD
     A[App starts] --> B{authenticated?}
     B -->|No| C[Login page only]
-    B -->|Yes| D[Header + Navigation]
-    C --> E[User enters email + password]
-    E --> F[validate email format]
-    F --> G[PBKDF2 hash typed password with stored salt]
-    G --> H{hash matches?}
-    H -->|Yes| I[Set session authenticated + user_email]
-    I --> J[Queue success toast]
-    J --> D
-    H -->|No| K[Error toast: Invalid email or password]
+    B -->|Yes| D[Header + Search UI]
+    C --> E[Email + password submitted]
+    E --> F[auth.verify_credentials]
+    F -->|OK| G[Set session + success toast]
+    G --> D
+    F -->|Fail| H[Error toast]
+    H --> C
+    D --> I{Log out?}
+    I -->|Yes| J[Clear session + search state]
+    J --> K[Info toast]
     K --> C
-    D --> L{Log out?}
-    L -->|Yes| M[Clear session + search state]
-    M --> N[Info toast: logged out]
-    N --> C
 ```
 
-### Step-by-step with example
+| Step | Example |
+|------|---------|
+| Open app | Only Sign in is available |
+| Valid login | Session set → Search UI |
+| Empty / wrong password | Toast error; stay on login |
+| Log out | Back to login; search results cleared |
 
-| Step | What happens | Example |
-|------|----------------|---------|
-| Open app | Only login is reachable | Sidebar hidden |
-| Type credentials | Password field is masked | `admin@valere.io` + password |
-| Verify | Hash password; compare to `salt:hash` | No plain password stored |
-| Success | Session set; toast shown | “Welcome back…” top-right |
-| Try Search before login | Blocked | Login page stays |
-
-**Password storage format:**
-
-```
-email → "salt_hex:pbkdf2_sha256_digest"
-```
-
-Login does **not decrypt**. It re-hashes the typed password and uses constant-time compare (`secrets.compare_digest`).
+Passwords: typed → PBKDF2 with stored salt → compare digests (never decrypted).
 
 ---
 
-## 2. Offline Data Flow (Pipeline)
+## 2. Online Search Data Flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant UI as app.py
+    participant T as Toast
+    participant H as Hybrid / Semantic / BM25
+    participant R as Recommender
+
+    U->>UI: Query + mode + filters + Search
+    alt empty query
+        UI->>UI: Clear previous results
+        UI->>T: warning toast
+    else non-empty query
+        UI->>H: search(query, filters, top_k=10)
+        H-->>UI: ranked SearchResult list
+        UI->>T: success / no-match toast
+        UI-->>U: product cards
+        U->>UI: pick a product
+        UI->>R: recommend(product_id)
+        R-->>UI: similar products
+    end
+```
+
+### Detailed search path (Hybrid mode)
+
+```
+User (logged in)
+  Query: "cotton"
+  Mode: Hybrid
+  Filters: category / price / rating (optional)
+      ↓
+encode_query → FAISS candidates
+tokenized query → BM25 candidates
+      ↓
+min-max normalize scores
+combined = 0.7 × semantic + 0.3 × BM25
+      ↓
+apply filters (category, price, rating)
+      ↓
+top 10 product cards
+  (title, category, rating, description, price)
+      ↓
+optional: Similar Products via recommender
+```
+
+### Empty query behavior
+
+```
+Submit with blank input
+  → do NOT reuse previous query
+  → clear search_results + search_query from session
+  → toast: "Please enter a search query."
+  → show empty state
+```
+
+---
+
+## 3. How Filters Are Applied
+
+```
+Retrieve candidates from semantic and/or BM25
+  → keep rows that pass category / price / rating
+  → return until top_k filled
+```
+
+**Example:** Category = Clothing, min rating = 4.0 → only Clothing products with rating ≥ 4.0 appear.
+
+---
+
+## 4. Recommendation Data Flow
+
+```
+User selects a result in “Similar Products”
+  → product_id taken from selectbox
+  → ProductRecommender.recommend(id)
+       ├─ content similarity (embeddings)
+       └─ co-occurrence (simulated)
+  → show top-N: title, category, price, rating
+```
+
+---
+
+## 5. Offline Pipeline Data Flow
 
 **Trigger:** `python scripts/run_pipeline.py`
 
 ```mermaid
 flowchart LR
-    A[Start Pipeline] --> B[Generate 800 Products]
-    B --> C[products_raw.csv]
-    C --> D[Clean & Engineer Features]
-    D --> E[products_clean.csv<br/>+ search_text]
-    E --> F[EDA Report]
-    E --> G[Batch Encode Text]
-    G --> H[product_embeddings.npy]
-    H --> I[Build FAISS Index]
-    I --> J[faiss_index.bin]
-    H --> K[KMeans + UMAP]
-    K --> L[cluster plot PNG]
-    E --> M[Run 15 Test Queries]
-    M --> N[evaluation_results.csv]
+    A[Generate / clean catalog] --> B[products_clean.csv]
+    B --> C[Embeddings]
+    C --> D[FAISS index]
+    C --> E[KMeans + UMAP]
+    E --> F[visuals/cluster_visualization.png]
+    B --> G[Evaluate 15 queries]
+    G --> H[reports/evaluation_*.csv/txt]
 ```
 
-| Step | Input | Output | Example |
-|------|-------|--------|---------|
-| Generate | Config (800 products) | Raw CSV | "Men's Winter Puffer Jacket" |
-| Clean | Raw CSV | Clean + `search_text` | title + description + category |
-| Embed | `search_text` | `.npy` | 800 × 384 floats |
-| Index | Embeddings | FAISS binary | Similarity search ready |
-| Evaluate | 15 queries | CSV metrics | Hybrid P@5 ≈ 0.91 |
+| Artifact | Used by UI? | Purpose |
+|----------|-------------|---------|
+| `products_clean.csv` | Yes | Search + filters |
+| `faiss_index.bin` / embeddings | Yes | Semantic search |
+| `cluster_visualization.png` | No (file deliverable) | Task 4 sanity-check |
+| `evaluation_results.csv` | No (file deliverable) | Task 5 metrics table |
 
 ---
 
-## 3. Online Search Data Flow (After Login)
+## 6. Toast Notification Flow
 
-**Trigger:** User clicks **Search** on the Search page
+| Event | Behavior |
+|-------|----------|
+| Login fail / empty fields | Immediate error toast |
+| Login success / logout | Queued toast (survives `st.rerun()`) |
+| Search with hits | Success toast |
+| Search with no hits / empty query | Warning toast |
 
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant UI as Streamlit
-    participant T as Toast
-    participant I as Query Intent
-    participant H as Hybrid Search
-    participant E as Embedding Generator
-    participant F as FAISS
-    participant B as BM25
-
-    U->>UI: Types query + Search
-    alt empty query
-        UI->>T: warning toast
-    else valid query
-        UI->>H: search_with_explanation(...)
-        H->>I: detect_query_intent(query)
-        I-->>H: category, confidence, type
-        H->>E: encode_query(query)
-        E-->>H: query vector
-        par Semantic
-            H->>F: top candidates
-            F-->>H: semantic results
-        and Keyword
-            H->>B: top candidates
-            B-->>H: BM25 results
-        end
-        H->>H: normalize + fuse + optional category boost
-        H-->>UI: results + intent + breakdowns
-        UI->>T: success toast (N results)
-        UI-->>U: cards + explanations
-    end
-```
+Position: top-right (`src/notifications.py` CSS).
 
 ---
 
-## 4. Detailed Hybrid Search Path
-
-```
-USER (authenticated)
-  Query: "home workout equipment small apartment"
-  Filters: optional category / price / rating
-      ↓
-QUERY INTENT
-  Category: Sports & Outdoors
-  Type: intent → suggested mode Semantic
-      ↓
-ENCODE ONCE → float32[384]
-      ↓
-     ┌───────────────┬───────────────┐
-     │ Semantic FAISS│ Keyword BM25  │
-     └───────┬───────┴───────┬───────┘
-             ↓               ↓
-     Min-max normalize scores to [0, 1]
-             ↓
-     combined = 0.7×semantic + 0.3×BM25
-     (+ soft category boost if enabled)
-             ↓
-     Top-k results + ScoreBreakdown
-             ↓
-UI cards + optional "Why this result?"
-Toast: Found N result(s)
-```
-
----
-
-## 5. Filter Data Flow
-
-Filters apply **after** retrieval:
-
-```
-Retrieve candidate pool (top_k × 3 to × 10)
-  → keep if category / price / rating match
-  → stop when top_k filled
-```
-
-**Example:** Filter = Clothing only → global retrieval, then Clothing rows pass.
-
----
-
-## 6. Recommendation Data Flow
-
-```
-User picks product from results
-  → content similarity (embeddings)
-  → co-occurrence (parquet)
-  → blend 60% content + 40% co-occurrence
-  → show top 5
-```
-
----
-
-## 7. Toast Notification Data Flow
-
-| Trigger | Path |
-|---------|------|
-| Immediate (errors, search done) | `toast_error()` / `toast_success()` → `st.toast()` |
-| After `st.rerun()` (login OK, logout) | `queue_toast()` → session list → `show_pending_toasts()` on next load |
-
-CSS (`inject_toast_styles`) pins the container to the **top-right** of the viewport.
-
----
-
-## 8. Startup Data Flow
+## 7. Startup Sequence
 
 ```
 1. set_page_config + inject_toast_styles
-2. init_auth_state
-3. show_pending_toasts
-4. if not authenticated → login_page() and STOP
-5. render_app_header()
-6. sidebar: Search | Clusters | Evaluation
-7. Search page → load_search_stack() (cached) if needed
+2. init_auth_state + show_pending_toasts
+3. if not authenticated → login_page() STOP
+4. render_app_header()
+5. load_search_stack() (cached)
+6. search_page() — sidebar mode/filters + main search
 ```
-
-Clusters / Evaluation skip heavy ML load when possible (static PNG / CSV).
 
 ---
 
-## 9. Example End-to-End Trace
+## 8. Example End-to-End Trace
 
-**User:** opens app → logs in as `admin@valere.io` → searches `"gift for toddler birthday party"`
+**User:** logs in → searches `"warm jacket for winter trip"` (Hybrid) → picks a jacket → sees similar items → logs out.
 
 | Stage | Result |
 |-------|--------|
-| Auth | Session authenticated; welcome toast |
-| Intent | Toys & Games |
-| Semantic | Plush, blocks, games |
-| BM25 alone | Weak (low P@5 historically) |
-| Hybrid | Stronger combined ranking |
-| UI | Intent banner + explanations + success toast |
-| Logout | Session cleared; info toast; back to login |
+| Auth | Welcome toast; Search unlocked |
+| Hybrid search | Intent-style clothing products ranked |
+| Cards | Clean product info (no score UI) |
+| Recommendations | Similar jackets / winter wear |
+| Logout | Info toast; login gate again |
 
 ---
 
-## 10. Artifacts Summary
+## 9. Artifacts Summary
 
-| File | Created by | Read by |
-|------|------------|---------|
-| `products_clean.csv` | Preprocessing | Search, Recommender |
-| `product_embeddings.npy` | EmbeddingGenerator | FAISS, Recommender |
-| `faiss_index.bin` | VectorSearch | VectorSearch |
-| `cooccurrence.parquet` | ProductRecommender | ProductRecommender |
-| `evaluation_results.csv` | SearchEvaluator | Evaluation page |
-| Hashes in `auth.py` | Manual / tooling | Login verification |
+| File | Created by | Consumed by |
+|------|------------|-------------|
+| `data/products_clean.csv` | Preprocessing | Search, recommender, UI filters |
+| `embeddings/*` | Embedding + FAISS build | Vector search, recommender |
+| `visuals/cluster_visualization.png` | Clustering | Reviewers / Drive pack (not UI) |
+| `reports/evaluation_results.csv` | Evaluation | Reviewers / Drive pack (not UI) |
+| Hashes in `auth.py` | Manual setup | Login verification |
