@@ -11,6 +11,12 @@ embeddings/
 *.npy
 *.bin
 
+# Local auth credential store (created at runtime; may contain user hashes)
+data/users.json
+data/sessions.json
+data/search_history.json
+data/.session_secret
+
 # IDE
 .idea/
 .vscode/

@@ -80,8 +80,9 @@ tokenized query → BM25 candidates
       ↓
 min-max normalize scores
 combined = 0.7 × semantic + 0.3 × BM25
+ranked results
       ↓
-apply filters (category, price, rating)
+Filter Engine (category, price range, rating via Metadata Store)
       ↓
 top 10 product cards
   (title, category, rating, description, price)
@@ -103,13 +104,20 @@ Submit with blank input
 
 ## 3. How Filters Are Applied
 
+Aligned with architecture Module 4 / DFD 7.0 Filter Engine:
+
 ```
-Retrieve candidates from semantic and/or BM25
-  → keep rows that pass category / price / rating
-  → return until top_k filled
+Hybrid / Semantic / BM25 → Ranked Results
+  → Filter Engine looks up D5 Metadata Store (ID, Category, Price, Rating)
+  → Apply Category Filter
+  → Apply Price Range Filter
+  → Apply Rating Filter
+  → Filtered Results → Result Presentation
 ```
 
-**Example:** Category = Clothing, min rating = 4.0 → only Clothing products with rating ≥ 4.0 appear.
+**Example:** Category = Clothing, min rating = 4.0 → only Clothing products with rating ≥ 4.0 appear (rank order preserved).
+
+Implementation: `src/filter_engine.py` (`FilterEngine` + `MetadataStore`).
 
 ---
 

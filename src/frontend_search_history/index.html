@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    :root {
+      --border: rgba(49, 51, 63, 0.15);
+      --hover: #f0f2f6;
+      --text: #31333f;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: "Source Sans Pro", "Segoe UI", sans-serif;
+      color: var(--text);
+      background: transparent;
+    }
+    #list {
+      max-height: 148px;
+      overflow-x: hidden;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 0.35rem;
+      background: #fff;
+    }
+    .item {
+      display: block;
+      width: 100%;
+      height: 1.45rem;
+      line-height: 1.45rem;
+      margin: 0;
+      padding: 0 0.45rem;
+      border: 0;
+      border-bottom: 1px solid rgba(49, 51, 63, 0.08);
+      border-radius: 0;
+      background: #fff;
+      color: var(--text);
+      font-size: 0.72rem;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: pointer;
+    }
+    .item:last-child { border-bottom: none; }
+    .item:hover { background: var(--hover); }
+  </style>
+</head>
+<body>
+  <div id="list"></div>
+  <script>
+    function sendMessageToStreamlitClient(type, data) {
+      const msg = Object.assign({ isStreamlitMessage: true, type: type }, data);
+      window.parent.postMessage(msg, "*");
+    }
+    function initStreamlit() {
+      sendMessageToStreamlitClient("streamlit:componentReady", { apiVersion: 1 });
+    }
+    function setFrameHeight(height) {
+      sendMessageToStreamlitClient("streamlit:setFrameHeight", { height: height });
+    }
+    function sendValue(value) {
+      sendMessageToStreamlitClient("streamlit:setComponentValue", { value: value });
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    const list = document.getElementById("list");
+
+    function renderItems(items) {
+      if (!items.length) {
+        list.innerHTML = "";
+        setFrameHeight(8);
+        return;
+      }
+      list.innerHTML = items
+        .map((q, i) => {
+          const full = String(q);
+          return (
+            `<button type="button" class="item" data-i="${i}" title="${escapeHtml(full)}">` +
+            `${escapeHtml(full)}` +
+            `</button>`
+          );
+        })
+        .join("");
+      list.querySelectorAll(".item").forEach((el) => {
+        el.addEventListener("click", () => {
+          const i = Number(el.getAttribute("data-i"));
+          const query = items[i];
+          if (!query) return;
+          sendValue({
+            action: "select",
+            query: String(query),
+            nonce: Date.now() + Math.random(),
+          });
+        });
+      });
+      // Frame = list height (capped by max-height) + small padding
+      const h = Math.min(148, items.length * 23 + 2) + 4;
+      setFrameHeight(h);
+    }
+
+    window.addEventListener("message", (event) => {
+      const data = event.data;
+      if (!data || data.type !== "streamlit:render") return;
+      const args = data.args || {};
+      const items = Array.isArray(args.items) ? args.items : [];
+      renderItems(items.map((x) => String(x || "").trim()).filter(Boolean));
+    });
+
+    initStreamlit();
+  </script>
+</body>
+</html>

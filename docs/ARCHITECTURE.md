@@ -127,7 +127,7 @@ Passwords are never shown in the UI and never stored as plain text.
 | BM25 | `bm25_search.py` | Keyword baseline |
 | Hybrid | `hybrid_search.py` | Default 70% semantic + 30% BM25 |
 
-**Filters (Task 3):** category, price range, minimum rating — applied after retrieval.
+**Filters (Task 3 / Module 4):** category, price range, minimum rating — applied post-ranking by `filter_engine.py` using Metadata Store (D5: ID, Category, Price, Rating).
 
 **Defaults (fixed in UI):** `top_k = 10`, semantic weight `0.7` (justified in `reports/`).
 

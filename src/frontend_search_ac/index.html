@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    :root {
+      --border: rgba(49, 51, 63, 0.2);
+      --hover: #f0f2f6;
+      --text: #31333f;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: "Source Sans Pro", "Segoe UI", sans-serif;
+      color: var(--text);
+      background: transparent;
+    }
+    .wrap { position: relative; width: 100%; }
+    .row { display: flex; gap: 0; align-items: stretch; }
+    #q {
+      flex: 1;
+      height: 2.5rem;
+      padding: 0 0.75rem;
+      border: 1px solid var(--border);
+      border-right: 0;
+      border-radius: 0.5rem 0 0 0.5rem;
+      font-size: 1rem;
+      outline: none;
+    }
+    #q:focus {
+      border-color: #ff4b4b;
+      box-shadow: 0 0 0 1px #ff4b4b33;
+    }
+    #go {
+      height: 2.5rem;
+      min-width: 5.5rem;
+      padding: 0 1.1rem;
+      border: 1px solid #ff4b4b;
+      border-radius: 0 0.5rem 0.5rem 0;
+      background: #ff4b4b;
+      color: #fff;
+      font-weight: 600;
+      font-size: 0.95rem;
+      cursor: pointer;
+    }
+    #go:hover { filter: brightness(0.95); }
+    #dd {
+      display: none;
+      position: absolute;
+      left: 0;
+      right: 5.5rem;
+      top: calc(2.5rem + 2px);
+      z-index: 1000;
+      max-height: 240px;
+      overflow-y: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 0.4rem;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+    }
+    .opt {
+      padding: 0.55rem 0.75rem;
+      cursor: pointer;
+      font-size: 0.92rem;
+      border-bottom: 1px solid rgba(49, 51, 63, 0.08);
+    }
+    .opt:last-child { border-bottom: none; }
+    .opt:hover, .opt.active { background: var(--hover); }
+    .hint {
+      padding: 0.45rem 0.75rem;
+      font-size: 0.78rem;
+      color: rgba(49, 51, 63, 0.6);
+      background: #fafafa;
+      border-bottom: 1px solid rgba(49, 51, 63, 0.08);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="row">
+      <input id="q" type="text" value="" placeholder="Search products…" autocomplete="off" spellcheck="false" />
+      <button id="go" type="button">Search</button>
+    </div>
+    <div id="dd" role="listbox"></div>
+  </div>
+  <script>
+    // Minimal Streamlit component protocol (no build step)
+    function sendMessageToStreamlitClient(type, data) {
+      const msg = Object.assign({ isStreamlitMessage: true, type: type }, data);
+      window.parent.postMessage(msg, "*");
+    }
+    function initStreamlit() {
+      sendMessageToStreamlitClient("streamlit:componentReady", { apiVersion: 1 });
+    }
+    function setFrameHeight(height) {
+      sendMessageToStreamlitClient("streamlit:setFrameHeight", { height: height });
+    }
+    function sendValue(value) {
+      sendMessageToStreamlitClient("streamlit:setComponentValue", { value: value });
+    }
+
+    let HISTORY = [];
+    let TITLES = [];
+    let MAX = 25;
+    let active = -1;
+    let draft = "";  // last text typed by the user (survives blur/re-render races)
+
+    const input = document.getElementById("q");
+    const dd = document.getElementById("dd");
+    const go = document.getElementById("go");
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function getItems() {
+      const typed = (input.value || draft).trim().toLowerCase();
+      if (!typed) {
+        return { kind: "history", items: HISTORY.slice(0, MAX) };
+      }
+      const starts = [];
+      const contains = [];
+      for (const t of TITLES) {
+        const low = String(t).toLowerCase();
+        if (low.startsWith(typed)) starts.push(t);
+        else if (low.includes(typed)) contains.push(t);
+        if (starts.length + contains.length >= MAX * 3) break;
+      }
+      const hist = HISTORY.filter((h) => String(h).toLowerCase().includes(typed));
+      const merged = [];
+      const seen = new Set();
+      for (const x of hist.concat(starts, contains)) {
+        const k = String(x).toLowerCase();
+        if (seen.has(k)) continue;
+        seen.add(k);
+        merged.push(x);
+        if (merged.length >= MAX) break;
+      }
+      return { kind: "products", items: merged };
+    }
+
+    function updateHeight() {
+      const open = dd.style.display !== "none";
+      setFrameHeight(open ? 300 : 52);
+    }
+
+    function hideList() {
+      dd.style.display = "none";
+      active = -1;
+      updateHeight();
+    }
+
+    function renderList() {
+      const { kind, items } = getItems();
+      if (!items.length) {
+        hideList();
+        return;
+      }
+      const label = kind === "history" ? "Recent searches" : "Matching products";
+      dd.innerHTML =
+        `<div class="hint">${label}</div>` +
+        items
+          .map((it, i) => `<div class="opt" data-i="${i}" role="option">${escapeHtml(it)}</div>`)
+          .join("");
+      dd.style.display = "block";
+      active = -1;
+      updateHeight();
+      dd.querySelectorAll(".opt").forEach((el) => {
+        el.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          choose(el.textContent);
+        });
+      });
+    }
+
+    function submit(raw) {
+      const q = String(
+        raw != null && raw !== "" ? raw : (input.value || draft || "")
+      ).trim();
+      const payload = { action: "search", query: q, nonce: Date.now() };
+      hideList();
+      sendValue(payload);
+    }
+
+    function choose(value) {
+      const v = String(value || "").trim();
+      input.value = v;
+      draft = v;
+      hideList();
+      submit(v);
+    }
+
+    input.addEventListener("focus", renderList);
+    input.addEventListener("click", renderList);
+    input.addEventListener("input", () => {
+      draft = input.value;
+      renderList();
+    });
+    input.addEventListener("blur", () => {
+      // Keep draft even after blur so Search click can't lose the typed query
+      draft = input.value || draft;
+      setTimeout(hideList, 180);
+    });
+    input.addEventListener("keydown", (e) => {
+      const opts = Array.from(dd.querySelectorAll(".opt"));
+      if (e.key === "ArrowDown" && opts.length) {
+        e.preventDefault();
+        active = Math.min(active + 1, opts.length - 1);
+        opts.forEach((o, i) => o.classList.toggle("active", i === active));
+        opts[active].scrollIntoView({ block: "nearest" });
+      } else if (e.key === "ArrowUp" && opts.length) {
+        e.preventDefault();
+        active = Math.max(active - 1, 0);
+        opts.forEach((o, i) => o.classList.toggle("active", i === active));
+        opts[active].scrollIntoView({ block: "nearest" });
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        draft = input.value || draft;
+        if (active >= 0 && opts[active]) choose(opts[active].textContent);
+        else submit(draft);
+      } else if (e.key === "Escape") {
+        hideList();
+      }
+    });
+
+    // Use mousedown + preventDefault so blur/re-render cannot clear the query first
+    go.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      draft = input.value || draft;
+      submit(draft);
+    });
+
+    document.addEventListener("mousedown", (e) => {
+      if (e.target === input || dd.contains(e.target) || e.target === go) return;
+      hideList();
+    });
+
+    try {
+      window.parent.document.addEventListener("mousedown", () => hideList(), true);
+    } catch (err) {}
+
+    window.addEventListener("message", (event) => {
+      const data = event.data;
+      if (!data || data.type !== "streamlit:render") return;
+      const args = data.args || {};
+      HISTORY = Array.isArray(args.history) ? args.history : [];
+      TITLES = Array.isArray(args.product_titles) ? args.product_titles : [];
+      MAX = Number(args.max_suggestions || 25);
+      const current = args.current_query == null ? "" : String(args.current_query);
+      const placeholder = args.placeholder || "Search products…";
+      input.placeholder = placeholder;
+
+      // While the user is editing, keep their local draft (including cleared text).
+      // When not focused, Python session value is the source of truth.
+      if (document.activeElement === input) {
+        input.value = draft;
+      } else {
+        input.value = current;
+        draft = current;
+      }
+      updateHeight();
+    });
+
+    initStreamlit();
+    updateHeight();
+  </script>
+</body>
+</html>

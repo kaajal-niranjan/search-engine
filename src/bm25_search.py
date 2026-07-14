@@ -12,9 +12,13 @@ import pandas as pd
 from rank_bm25 import BM25Okapi
 
 from src.config import CLEAN_CATALOG_PATH, DEFAULT_TOP_K
+from src.filter_engine import FilterCriteria, FilterEngine
 from src.vector_search import SearchResult
 
 logger = logging.getLogger(__name__)
+
+_FILTER_CANDIDATE_MULTIPLIER = 10
+_DEFAULT_CANDIDATE_MULTIPLIER = 3
 
 
 def _tokenize(text: str) -> list[str]:
@@ -30,6 +34,7 @@ class KeywordSearch:
         self._df: Optional[pd.DataFrame] = None
         self._records: Optional[list[dict]] = None
         self._bm25: Optional[BM25Okapi] = None
+        self._filter_engine = FilterEngine()
 
     def _load_and_index(self) -> None:
         if self._bm25 is not None:
@@ -44,24 +49,6 @@ class KeywordSearch:
         self._bm25 = BM25Okapi(corpus_tokens)
         logger.info("BM25 index built over %d documents", len(self._df))
 
-    def _passes_filters(
-        self,
-        row: dict,
-        category: Optional[str],
-        min_price: Optional[float],
-        max_price: Optional[float],
-        min_rating: Optional[float],
-    ) -> bool:
-        if category and row["category"] != category:
-            return False
-        if min_price is not None and row["price"] < min_price:
-            return False
-        if max_price is not None and row["price"] > max_price:
-            return False
-        if min_rating is not None and row["rating"] < min_rating:
-            return False
-        return True
-
     def search(
         self,
         query: str,
@@ -70,8 +57,14 @@ class KeywordSearch:
         min_price: Optional[float] = None,
         max_price: Optional[float] = None,
         min_rating: Optional[float] = None,
+        apply_filters: bool = True,
     ) -> list[SearchResult]:
-        """Return BM25-ranked products for a keyword query."""
+        """
+        Return BM25-ranked products for a keyword query.
+
+        Ranks by BM25 first, then applies Filter Engine (category / price / rating)
+        when apply_filters is True.
+        """
         self._load_and_index()
         assert self._records is not None and self._bm25 is not None
 
@@ -80,8 +73,18 @@ class KeywordSearch:
             return []
 
         scores = np.asarray(self._bm25.get_scores(query_tokens), dtype=np.float32)
-        has_filters = any(v is not None for v in (category, min_price, max_price, min_rating))
-        pool = min(len(scores), top_k * (10 if has_filters else 3))
+        criteria = FilterCriteria.from_kwargs(
+            category=category,
+            min_price=min_price,
+            max_price=max_price,
+            min_rating=min_rating,
+        )
+        mult = (
+            _FILTER_CANDIDATE_MULTIPLIER
+            if apply_filters and criteria.is_active()
+            else _DEFAULT_CANDIDATE_MULTIPLIER
+        )
+        pool = min(len(scores), top_k * mult)
 
         if pool < len(scores):
             candidate_idx = np.argpartition(-scores, pool - 1)[:pool]
@@ -89,12 +92,10 @@ class KeywordSearch:
         else:
             candidate_idx = np.argsort(-scores)
 
-        results: list[SearchResult] = []
+        ranked: list[SearchResult] = []
         for idx in candidate_idx:
             row = self._records[int(idx)]
-            if not self._passes_filters(row, category, min_price, max_price, min_rating):
-                continue
-            results.append(
+            ranked.append(
                 SearchResult(
                     product_id=int(row["id"]),
                     score=float(scores[idx]),
@@ -105,7 +106,8 @@ class KeywordSearch:
                     rating=float(row["rating"]),
                 )
             )
-            if len(results) >= top_k:
-                break
 
-        return results
+        if not apply_filters:
+            return ranked[:top_k]
+
+        return self._filter_engine.apply(ranked, criteria, top_k=top_k)

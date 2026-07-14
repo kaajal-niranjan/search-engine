@@ -17,6 +17,7 @@ Updated for the **current** app: login-gated **search-only** UI, file-based clus
 | `src/vector_search.py` | FAISS semantic search |
 | `src/bm25_search.py` | BM25 keyword search |
 | `src/hybrid_search.py` | Score fusion (+ optional explain API unused by UI) |
+| `src/filter_engine.py` | Post-ranking Filter Engine + Metadata Store (D5) |
 | `src/query_intent.py` | Intent helpers (available; not shown in minimal UI) |
 | `src/search_explanation.py` | Score breakdown dataclass (library; not shown in UI) |
 | `src/recommender.py` | Similar products |
@@ -67,11 +68,15 @@ Default: `0.7 * sem_norm + 0.3 * bm25_norm` after min-max normalization.
 
 ### FAISS (`vector_search.py`)
 
-`IndexFlatIP` on L2-normalized vectors (= cosine). Filters applied post-retrieval.
+`IndexFlatIP` on L2-normalized vectors (= cosine). Ranked neighbors are passed to Filter Engine.
 
 ### BM25 (`bm25_search.py`)
 
-Okapi BM25 over `search_text`; same filters.
+Okapi BM25 over `search_text`; same post-ranking Filter Engine path.
+
+### Filter Engine (`filter_engine.py`)
+
+After ranking: Category, Price Range, and Rating filters via Metadata Store (ID, Category, Price, Rating).
 
 ### Recommender (`recommender.py`)
 

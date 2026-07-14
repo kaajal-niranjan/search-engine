@@ -12,7 +12,7 @@ Current understanding of **scope**, **what the UI shows**, and **how the system 
 |------|-------------|----------------|
 | Task 1 | Catalog + `search_text` + EDA | `data/`, `reports/eda_report.txt` |
 | Task 2 | Embeddings + FAISS + semantic search | `src/embedding_generator.py`, `vector_search.py` |
-| Task 3 | Filters + BM25 + hybrid blend | `bm25_search.py`, `hybrid_search.py`, UI filters |
+| Task 3 | Filters + BM25 + hybrid blend | `bm25_search.py`, `hybrid_search.py`, `filter_engine.py`, UI filters |
 | Task 4 | Similar products + co-occurrence + clusters | `recommender.py`, `clustering.py`, `visuals/` |
 | Task 5 | Eval queries + P@k + search UI + comparison write-up | `evaluation.py`, `reports/`, Streamlit search |
 

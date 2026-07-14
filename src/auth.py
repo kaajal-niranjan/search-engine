@@ -1,14 +1,29 @@
-"""Email/password authentication with salted one-way password hashing."""
+"""Email/password authentication with local credential store (D1).
+
+Users register first; credentials are stored locally as salted PBKDF2 digests
+(salt:hash). Plaintext passwords are never stored or shown in the UI.
+"""
 
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import secrets
+import threading
+from pathlib import Path
 
-# Passwords are stored as salted PBKDF2 digests (salt:hash).
-# Plaintext passwords are never stored in code or shown in the UI.
-USERS: dict[str, str] = {
+from src.config import USERS_STORE_PATH
+
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_PBKDF2_ITERATIONS = 100_000
+_MIN_PASSWORD_LENGTH = 6
+
+# Thread-safe file I/O for multi-session Streamlit use
+_lock = threading.Lock()
+
+# Seed accounts written once when the local store is first created.
+_SEED_USERS: dict[str, str] = {
     "admin@valere.io": (
         "b686b9a968e82c79ae31abe16cb444a4:"
         "3b7e2b2742c668ad87b7b78f37fd37cf182ac4dcaffee29dedfcfe12db9ab3f4"
@@ -22,9 +37,6 @@ USERS: dict[str, str] = {
         "33a9152dee8af32cef05bca84331e35f7d37c7a6714cedb6c88d68c7205aacc0"
     ),
 }
-
-EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-_PBKDF2_ITERATIONS = 100_000
 
 
 def _derive_hash(password: str, salt: str) -> str:
@@ -48,18 +60,100 @@ def is_valid_email(email: str) -> bool:
     return bool(EMAIL_PATTERN.match(email.strip()))
 
 
-def verify_credentials(email: str, password: str) -> bool:
+def _normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def _read_store(path: Path) -> dict[str, str]:
+    """Read credential map from disk (caller must hold _lock)."""
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(_SEED_USERS, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        return dict(_SEED_USERS)
+
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        return {}
+    return {_normalize_email(str(k)): str(v) for k, v in raw.items()}
+
+
+def _write_store(users: dict[str, str], path: Path) -> None:
+    """Write credential map to disk (caller must hold _lock)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(users, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
+def load_users(path: Path = USERS_STORE_PATH) -> dict[str, str]:
+    """Load email → salt:hash map from the local credential store."""
+    with _lock:
+        return _read_store(path)
+
+
+def user_exists(email: str, path: Path = USERS_STORE_PATH) -> bool:
+    """Return True if the email is already registered."""
+    return _normalize_email(email) in load_users(path)
+
+
+def register_user(
+    email: str,
+    password: str,
+    path: Path = USERS_STORE_PATH,
+) -> tuple[bool, str]:
+    """
+    Register a new user in the local credential store.
+
+    Returns (success, message). On success the password is stored as a
+    salted PBKDF2 digest only.
+    """
+    normalized = _normalize_email(email)
+
+    if not normalized:
+        return False, "Email is required."
+    if not is_valid_email(normalized):
+        return False, "Please enter a valid email address."
+    if not password:
+        return False, "Password is required."
+    if len(password) < _MIN_PASSWORD_LENGTH:
+        return False, f"Password must be at least {_MIN_PASSWORD_LENGTH} characters."
+
+    with _lock:
+        users = _read_store(path)
+        if normalized in users:
+            return False, "An account with this email already exists."
+
+        users[normalized] = hash_password(password)
+        _write_store(users, path)
+
+    return True, "Account created successfully. You can sign in now."
+
+
+def verify_credentials(
+    email: str,
+    password: str,
+    path: Path = USERS_STORE_PATH,
+) -> bool:
     """
     Verify login by hashing the entered password and comparing digests.
 
     Passwords are not decrypted. One-way hashing is used so stored credentials
     cannot be reversed back to the original password.
     """
-    normalized = email.strip().lower()
-    stored = USERS.get(normalized)
+    normalized = _normalize_email(email)
+    stored = load_users(path).get(normalized)
     if not stored or ":" not in stored:
         return False
 
     salt, expected_hash = stored.split(":", 1)
     actual_hash = _derive_hash(password, salt)
     return secrets.compare_digest(actual_hash, expected_hash)
+
+
+# Legacy alias: in-memory-style access for older docs/snippets.
+# Prefer load_users() / register_user() / verify_credentials().
+USERS: dict[str, str] = _SEED_USERS

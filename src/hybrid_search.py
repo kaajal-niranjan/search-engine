@@ -13,11 +13,15 @@ from src.config import (
     DEFAULT_TOP_K,
     HYBRID_CANDIDATE_MULTIPLIER,
 )
+from src.filter_engine import FilterCriteria, FilterEngine
 from src.query_intent import QueryIntent, detect_query_intent, recommend_search_mode
 from src.search_explanation import ScoreBreakdown
 from src.vector_search import SearchResult, VectorSearch
 
 logger = logging.getLogger(__name__)
+
+# Extra oversampling when post-ranking Filter Engine is active
+_FILTER_POOL_MULTIPLIER = 5
 
 
 @dataclass
@@ -60,6 +64,7 @@ class HybridSearch:
         self.keyword_search = keyword_search or KeywordSearch()
         self.semantic_weight = semantic_weight
         self.bm25_weight = bm25_weight
+        self._filter_engine = FilterEngine()
 
     def search(
         self,
@@ -71,21 +76,31 @@ class HybridSearch:
         min_rating: Optional[float] = None,
         candidate_pool: Optional[int] = None,
     ) -> list[SearchResult]:
-        """Re-rank by weighted combination of normalized semantic and BM25 scores."""
-        filters = dict(
+        """
+        Re-rank by weighted combination of normalized semantic and BM25 scores,
+        then apply Filter Engine (category / price / rating) on ranked results.
+        """
+        criteria = FilterCriteria.from_kwargs(
             category=category,
             min_price=min_price,
             max_price=max_price,
             min_rating=min_rating,
         )
-        pool = candidate_pool or max(top_k * HYBRID_CANDIDATE_MULTIPLIER, 20)
+        base_pool = candidate_pool or max(top_k * HYBRID_CANDIDATE_MULTIPLIER, 20)
+        pool = (
+            max(base_pool, top_k * _FILTER_POOL_MULTIPLIER)
+            if criteria.is_active()
+            else base_pool
+        )
 
-        # Encode query once and share across semantic retrieval
+        # Encode query once; retrieve unfiltered candidates for hybrid ranking
         query_vec = self.vector_search.embedding_generator.encode_query(query)
         semantic_results = self.vector_search.search_with_vector(
-            query_vec, top_k=pool, **filters
+            query_vec, top_k=pool, apply_filters=False
         )
-        keyword_results = self.keyword_search.search(query, top_k=pool, **filters)
+        keyword_results = self.keyword_search.search(
+            query, top_k=pool, apply_filters=False
+        )
 
         sem_scores = {r.product_id: r.score for r in semantic_results}
         kw_scores = {r.product_id: r.score for r in keyword_results}
@@ -101,13 +116,14 @@ class HybridSearch:
                 + self.bm25_weight * kw_norm.get(pid, 0.0)
             )
 
-        ranked = sorted(score_map.items(), key=lambda x: x[1], reverse=True)[:top_k]
+        # Rank fully first (Module 3), then Filter Engine (Module 4)
+        ranked_ids = sorted(score_map.items(), key=lambda x: x[1], reverse=True)
 
         meta: dict[int, SearchResult] = {}
         for r in semantic_results + keyword_results:
             meta[r.product_id] = r
 
-        return [
+        ranked_results = [
             SearchResult(
                 product_id=pid,
                 score=score,
@@ -117,9 +133,11 @@ class HybridSearch:
                 price=meta[pid].price,
                 rating=meta[pid].rating,
             )
-            for pid, score in ranked
+            for pid, score in ranked_ids
             if pid in meta
         ]
+
+        return self._filter_engine.apply(ranked_results, criteria, top_k=top_k)
 
     def search_with_explanation(
         self,
@@ -137,6 +155,8 @@ class HybridSearch:
 
         When auto_category_boost is enabled and the user has not set a category filter,
         products in the detected category receive a small score boost.
+
+        Hard filters (category / price / rating) are applied by Filter Engine after ranking.
         """
         intent = detect_query_intent(query)
         applied_boost = False
@@ -144,19 +164,26 @@ class HybridSearch:
         if auto_category_boost and category is None and intent.has_category_hint:
             applied_boost = True
 
-        filters = dict(
+        criteria = FilterCriteria.from_kwargs(
             category=category,
             min_price=min_price,
             max_price=max_price,
             min_rating=min_rating,
         )
-        pool = max(top_k * HYBRID_CANDIDATE_MULTIPLIER, 20)
+        base_pool = max(top_k * HYBRID_CANDIDATE_MULTIPLIER, 20)
+        pool = (
+            max(base_pool, top_k * _FILTER_POOL_MULTIPLIER)
+            if criteria.is_active()
+            else base_pool
+        )
 
         query_vec = self.vector_search.embedding_generator.encode_query(query)
         semantic_results = self.vector_search.search_with_vector(
-            query_vec, top_k=pool, **filters
+            query_vec, top_k=pool, apply_filters=False
         )
-        keyword_results = self.keyword_search.search(query, top_k=pool, **filters)
+        keyword_results = self.keyword_search.search(
+            query, top_k=pool, apply_filters=False
+        )
 
         sem_scores = {r.product_id: r.score for r in semantic_results}
         kw_scores = {r.product_id: r.score for r in keyword_results}
@@ -203,13 +230,13 @@ class HybridSearch:
                 matched_signals=matched,
             )
 
-        ranked = sorted(score_map.items(), key=lambda x: x[1], reverse=True)[:top_k]
+        ranked_ids = sorted(score_map.items(), key=lambda x: x[1], reverse=True)
 
         meta: dict[int, SearchResult] = {}
         for r in semantic_results + keyword_results:
             meta[r.product_id] = r
 
-        results = [
+        ranked_results = [
             SearchResult(
                 product_id=pid,
                 score=score,
@@ -219,9 +246,11 @@ class HybridSearch:
                 price=meta[pid].price,
                 rating=meta[pid].rating,
             )
-            for pid, score in ranked
+            for pid, score in ranked_ids
             if pid in meta
         ]
+
+        results = self._filter_engine.apply(ranked_results, criteria, top_k=top_k)
 
         for r in results:
             if r.product_id in breakdowns:

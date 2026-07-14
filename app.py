@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +13,16 @@ import streamlit as st
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.auth import is_valid_email, verify_credentials
+from src.auth import is_valid_email, register_user, verify_credentials
+from src.browser_cookies import (
+    clear_session_cookie,
+    clear_session_id_from_browser,
+    get_cookie_manager,
+    inject_session_restore_bridge,
+    persist_session_id_to_browser,
+    read_session_cookie,
+    write_session_cookie,
+)
 from src.notifications import (
     inject_toast_styles,
     queue_toast,
@@ -26,12 +36,29 @@ from src.config import (
     CLEAN_CATALOG_PATH,
     DEFAULT_SEMANTIC_WEIGHT,
     DEFAULT_TOP_K,
+    SEARCH_HISTORY_MAX_PER_USER,
 )
 from src.embedding_generator import EmbeddingGenerator
 from src.hybrid_search import HybridSearch
 from src.recommender import ProductRecommender
+from src.search_assist import (
+    add_search_history,
+    clear_search_history,
+    get_search_history,
+)
+from src.search_autocomplete import render_search_autocomplete
+from src.search_history_list import render_search_history_list
+from src.session import (
+    IDLE_TIMEOUT_SECONDS,
+    create_session,
+    delete_session,
+    get_session,
+    touch_session,
+    validate_session_for_restore,
+)
 from src.vector_search import SearchResult, VectorSearch
 
+import streamlit.components.v1 as components
 st.set_page_config(
     page_title="Semantic Product Search",
     page_icon="🔍",
@@ -163,6 +190,12 @@ def inject_app_styles() -> None:
             border-right: 0 !important;
             height: 2.5rem;
         }
+        /* Align autocomplete selectbox with Search button */
+        div[data-testid="stForm"] div[data-testid="stHorizontalBlock"] > div:first-child [data-baseweb="select"] > div {
+            min-height: 2.5rem;
+            border-top-right-radius: 0 !important;
+            border-bottom-right-radius: 0 !important;
+        }
         div[data-testid="stForm"] div[data-testid="stHorizontalBlock"] > div:last-child button {
             border-top-left-radius: 0 !important;
             border-bottom-left-radius: 0 !important;
@@ -185,6 +218,13 @@ def inject_app_styles() -> None:
             font-weight: 650;
             margin-top: 0.15rem;
         }
+        /* Hide CookieManager helper iframe (session persistence) */
+        iframe[title="extra_streamlit_components.CookieManager.cookie_manager"] {
+            display: none !important;
+            height: 0 !important;
+            width: 0 !important;
+            position: absolute !important;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -196,6 +236,10 @@ def init_auth_state() -> None:
         st.session_state.authenticated = False
     if "user_email" not in st.session_state:
         st.session_state.user_email = None
+    if "session_id" not in st.session_state:
+        st.session_state.session_id = None
+    if "auth_view" not in st.session_state:
+        st.session_state.auth_view = "login"  # "login" | "register"
 
 
 def clear_app_state() -> None:
@@ -204,24 +248,201 @@ def clear_app_state() -> None:
         st.session_state.pop(key, None)
 
 
-def logout() -> None:
+def establish_login(email: str, cookie_manager) -> None:
+    """Mark user authenticated and persist a server-backed browser session."""
+    normalized = email.strip().lower()
+    session = create_session(normalized)
+    write_session_cookie(cookie_manager, session.session_id)
+    persist_session_id_to_browser(session.session_id)
+    st.session_state.authenticated = True
+    st.session_state.user_email = normalized
+    st.session_state.session_id = session.session_id
+
+
+def logout(cookie_manager=None, *, reason: str = "manual") -> None:
+    """Clear in-memory auth, server session, and browser session id."""
+    session_id = st.session_state.get("session_id")
+    if not session_id:
+        # Fall back to cookie / query bridge if state was lost
+        try:
+            session_id = read_session_cookie(cookie_manager) if cookie_manager else None
+        except Exception:
+            session_id = None
+
+    delete_session(session_id)
+    if cookie_manager is not None:
+        clear_session_cookie(cookie_manager)
+    clear_session_id_from_browser()
+
     st.session_state.authenticated = False
     st.session_state.user_email = None
+    st.session_state.session_id = None
     clear_app_state()
-    # Keep URL clean: http://localhost:8501 (no ?logout=1)
-    if "logout" in st.query_params:
-        del st.query_params["logout"]
-    queue_toast("You have been logged out.", "info")
+    for key in ("logout", "idle_logout", "sps_sid"):
+        if key in st.query_params:
+            del st.query_params[key]
+    if reason == "idle":
+        queue_toast("You were logged out due to 1 minute of inactivity.", "warning")
+    else:
+        queue_toast("You have been logged out.", "info")
     st.rerun()
 
 
-def login_page() -> None:
-    """Default route — email/password login gate."""
+def inject_idle_logout_watchdog() -> None:
+    """
+    Browser-side idle signal (best effort).
+
+    Streamlit HTML components run in a sandboxed iframe and often cannot
+    navigate the parent page, so this alone is not enough — see
+    idle_session_watchdog() for the reliable server-side logout.
+    """
+    idle_ms = int(IDLE_TIMEOUT_SECONDS * 1000)
+    components.html(
+        f"""
+        <script>
+        (function () {{
+          const IDLE_MS = {idle_ms};
+          const FLAG = 'idle_logout';
+          let lastActivity = Date.now();
+          const bump = function () {{
+            lastActivity = Date.now();
+            try {{ window.parent.localStorage.setItem('sps_last_activity', String(lastActivity)); }} catch (e) {{}}
+          }};
+          const events = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click', 'wheel'];
+
+          const targetDocs = [];
+          try {{ targetDocs.push(window.parent.document); }} catch (e) {{}}
+          targetDocs.push(document);
+
+          targetDocs.forEach(function (doc) {{
+            events.forEach(function (name) {{
+              try {{ doc.addEventListener(name, bump, true); }} catch (e) {{}}
+            }});
+          }});
+          try {{ window.parent.addEventListener('focus', bump); }} catch (e) {{}}
+          bump();
+
+          setInterval(function () {{
+            if (Date.now() - lastActivity < IDLE_MS) return;
+            try {{
+              window.parent.localStorage.removeItem('sps_sid');
+              window.parent.localStorage.setItem('sps_idle_logout', '1');
+            }} catch (e) {{}}
+            try {{
+              const url = new URL(window.top.location.href);
+              if (url.searchParams.get(FLAG) === '1') return;
+              url.searchParams.set(FLAG, '1');
+              window.top.location.replace(url.toString());
+            }} catch (err) {{
+              try {{
+                const url = new URL(window.parent.location.href);
+                url.searchParams.set(FLAG, '1');
+                window.parent.location.replace(url.toString());
+              }} catch (err2) {{}}
+            }}
+          }}, 1000);
+        }})();
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
+@st.fragment(run_every=timedelta(seconds=5))
+def idle_session_watchdog() -> None:
+    """
+    Reliable idle auto-logout: runs every 5s while the dashboard is open.
+
+    Any Streamlit action (search, click, filter change) refreshes last_activity
+    via sync_auth_session → touch_session. If no action happens for 1 minute,
+    this fragment logs the user out.
+    """
+    if not st.session_state.get("authenticated"):
+        return
+    sid = st.session_state.get("session_id")
+    if not sid:
+        return
+    session = get_session(sid)
+    if session is None or session.is_idle_expired:
+        cookie_manager = get_cookie_manager()
+        logout(cookie_manager, reason="idle")
+
+
+def sync_auth_session(cookie_manager) -> None:
+    """
+    Restore auth after refresh from cookie / localStorage bridge,
+    keep server-side last_activity fresh, and honor idle logout.
+    """
+    st.session_state._sps_suppress_login = False
+
+    if st.query_params.get("idle_logout") == "1":
+        logout(cookie_manager, reason="idle")
+
+    session_id = read_session_cookie(cookie_manager)
+    if "sps_sid" in st.query_params:
+        # Clean the localStorage bridge param from the URL after reading it
+        try:
+            del st.query_params["sps_sid"]
+        except Exception:
+            pass
+
+    # Already signed in this Streamlit session — keep the same session id alive
+    if st.session_state.authenticated and st.session_state.user_email:
+        sid = st.session_state.get("session_id") or session_id
+        if sid:
+            touched = touch_session(sid)
+            if touched is None:
+                st.session_state.session_id = None
+                logout(cookie_manager, reason="idle")
+                return
+            st.session_state.session_id = touched.session_id
+            write_session_cookie(cookie_manager, touched.session_id)
+            persist_session_id_to_browser(touched.session_id)
+        else:
+            # Recover a session id if cookie was missing mid-session
+            created = create_session(st.session_state.user_email)
+            st.session_state.session_id = created.session_id
+            write_session_cookie(cookie_manager, created.session_id)
+            persist_session_id_to_browser(created.session_id)
+        return
+
+    # Fresh browser load — restore from server-backed session id
+    session = validate_session_for_restore(session_id)
+    if session is not None:
+        touched = touch_session(session.session_id) or session
+        st.session_state.authenticated = True
+        st.session_state.user_email = touched.email
+        st.session_state.session_id = touched.session_id
+        write_session_cookie(cookie_manager, touched.session_id)
+        persist_session_id_to_browser(touched.session_id)
+        return
+
+    # Invalid / unknown id — clear browser copies, but don't crash
+    if session_id:
+        delete_session(session_id)
+        clear_session_cookie(cookie_manager)
+        clear_session_id_from_browser()
+
+    # Allow CookieManager / localStorage bridge one turn before showing sign-in
+    if not st.session_state.get("_sps_cookie_wait_done"):
+        st.session_state._sps_cookie_wait_done = True
+        st.session_state._sps_suppress_login = True
+
+
+def _inject_auth_styles() -> None:
     st.markdown(
         """
         <style>
         [data-testid="stSidebar"] { display: none; }
         [data-testid="stSidebarCollapsedControl"] { display: none; }
+        /* Hide CookieManager helper iframe (session persistence) */
+        iframe[title="extra_streamlit_components.CookieManager.cookie_manager"] {
+            display: none !important;
+            height: 0 !important;
+            width: 0 !important;
+            position: absolute !important;
+        }
         .login-title {
             text-align: center;
             margin-bottom: 0.25rem;
@@ -236,70 +457,198 @@ def login_page() -> None:
             font-size: 0.85rem;
             margin: -0.35rem 0 0.75rem 0;
         }
+        .auth-switch {
+            text-align: center;
+            margin-top: 1rem;
+            color: rgba(49, 51, 63, 0.75);
+            font-size: 0.9rem;
+        }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
+
+def _switch_auth_view(view: str) -> None:
+    st.session_state.auth_view = view
+    for key in (
+        "login_email_error",
+        "login_password_error",
+        "register_email_error",
+        "register_password_error",
+        "register_confirm_error",
+    ):
+        st.session_state.pop(key, None)
+    st.rerun()
+
+
+def login_form(cookie_manager) -> None:
+    """Email/password sign-in against the local credential store."""
     email_error = st.session_state.get("login_email_error", "")
     password_error = st.session_state.get("login_password_error", "")
 
-    _spacer, center, _spacer2 = st.columns([1, 1.2, 1])
-    with center:
-        st.markdown('<p class="login-title"><h2>🔍 Sign in</h2></p>', unsafe_allow_html=True)
-        st.markdown(
-            '<p class="login-subtitle">Semantic Product Search Engine</p>',
-            unsafe_allow_html=True,
+    st.markdown('<p class="login-title"><h2>🔍 Sign in</h2></p>', unsafe_allow_html=True)
+    st.markdown(
+        '<p class="login-subtitle">Semantic Product Search Engine</p>',
+        unsafe_allow_html=True,
+    )
+
+    with st.form("login_form", clear_on_submit=False):
+        email = st.text_input("Email", placeholder="example@gmail.com")
+        if email_error:
+            st.markdown(f'<p class="field-error">{email_error}</p>', unsafe_allow_html=True)
+
+        password = st.text_input("Password", type="password", placeholder="Enter your password")
+        if password_error:
+            st.markdown(f'<p class="field-error">{password_error}</p>', unsafe_allow_html=True)
+
+        submitted = st.form_submit_button("Log in", type="primary", use_container_width=True)
+
+    if submitted:
+        email_value = email.strip()
+        st.session_state.login_email_error = ""
+        st.session_state.login_password_error = ""
+        has_field_error = False
+
+        if not email_value:
+            st.session_state.login_email_error = "Email is required."
+            has_field_error = True
+        elif not is_valid_email(email_value):
+            st.session_state.login_email_error = "Please enter a valid email address."
+            has_field_error = True
+
+        if not password:
+            st.session_state.login_password_error = "Password is required."
+            has_field_error = True
+
+        if has_field_error:
+            st.rerun()
+
+        if verify_credentials(email_value, password):
+            st.session_state.login_email_error = ""
+            st.session_state.login_password_error = ""
+            establish_login(email_value, cookie_manager)
+            queue_toast(f"Welcome back, {email_value.lower()}!", "success")
+            st.rerun()
+
+        st.session_state.login_email_error = ""
+        st.session_state.login_password_error = ""
+        toast_error("Invalid email or password.")
+
+    st.caption("Sign in with the email and password you registered.")
+    st.markdown('<p class="auth-switch">Don\'t have an account?</p>', unsafe_allow_html=True)
+    if st.button("Create an account", use_container_width=True, key="goto_register"):
+        _switch_auth_view("register")
+
+
+def register_form() -> None:
+    """Create a new account and save credentials to the local store."""
+    email_error = st.session_state.get("register_email_error", "")
+    password_error = st.session_state.get("register_password_error", "")
+    confirm_error = st.session_state.get("register_confirm_error", "")
+
+    st.markdown('<p class="login-title"><h2>🔍 Create account</h2></p>', unsafe_allow_html=True)
+    st.markdown(
+        '<p class="login-subtitle">Register to use Semantic Product Search</p>',
+        unsafe_allow_html=True,
+    )
+
+    with st.form("register_form", clear_on_submit=False):
+        email = st.text_input("Email", placeholder="example@gmail.com", key="register_email")
+        if email_error:
+            st.markdown(f'<p class="field-error">{email_error}</p>', unsafe_allow_html=True)
+
+        password = st.text_input(
+            "Password",
+            type="password",
+            placeholder="At least 6 characters",
+            key="register_password",
+        )
+        if password_error:
+            st.markdown(f'<p class="field-error">{password_error}</p>', unsafe_allow_html=True)
+
+        confirm = st.text_input(
+            "Confirm password",
+            type="password",
+            placeholder="Re-enter your password",
+            key="register_confirm",
+        )
+        if confirm_error:
+            st.markdown(f'<p class="field-error">{confirm_error}</p>', unsafe_allow_html=True)
+
+        submitted = st.form_submit_button(
+            "Create account", type="primary", use_container_width=True
         )
 
-        with st.form("login_form", clear_on_submit=False):
-            email = st.text_input("Email", placeholder="example@gmail.com")
-            if email_error:
-                st.markdown(f'<p class="field-error">{email_error}</p>', unsafe_allow_html=True)
+    if submitted:
+        email_value = email.strip()
+        st.session_state.register_email_error = ""
+        st.session_state.register_password_error = ""
+        st.session_state.register_confirm_error = ""
+        has_field_error = False
 
-            password = st.text_input("Password", type="password", placeholder="Enter your password")
-            if password_error:
-                st.markdown(f'<p class="field-error">{password_error}</p>', unsafe_allow_html=True)
+        if not email_value:
+            st.session_state.register_email_error = "Email is required."
+            has_field_error = True
+        elif not is_valid_email(email_value):
+            st.session_state.register_email_error = "Please enter a valid email address."
+            has_field_error = True
 
-            submitted = st.form_submit_button("Log in", type="primary", use_container_width=True)
+        if not password:
+            st.session_state.register_password_error = "Password is required."
+            has_field_error = True
+        elif len(password) < 6:
+            st.session_state.register_password_error = (
+                "Password must be at least 6 characters."
+            )
+            has_field_error = True
 
-        if submitted:
-            email_value = email.strip()
-            st.session_state.login_email_error = ""
-            st.session_state.login_password_error = ""
-            has_field_error = False
+        if not confirm:
+            st.session_state.register_confirm_error = "Please confirm your password."
+            has_field_error = True
+        elif password and confirm != password:
+            st.session_state.register_confirm_error = "Passwords do not match."
+            has_field_error = True
 
-            if not email_value:
-                st.session_state.login_email_error = "Email is required."
-                has_field_error = True
-            elif not is_valid_email(email_value):
-                st.session_state.login_email_error = "Please enter a valid email address."
-                has_field_error = True
+        if has_field_error:
+            st.rerun()
 
-            if not password:
-                st.session_state.login_password_error = "Password is required."
-                has_field_error = True
+        ok, message = register_user(email_value, password)
+        if ok:
+            st.session_state.auth_view = "login"
+            for key in (
+                "register_email_error",
+                "register_password_error",
+                "register_confirm_error",
+            ):
+                st.session_state.pop(key, None)
+            queue_toast(message, "success")
+            st.rerun()
 
-            if has_field_error:
-                st.rerun()
+        # Duplicate email or store error — show inline + toast after rerun
+        st.session_state.register_email_error = message
+        queue_toast(message, "error")
+        st.rerun()
 
-            if verify_credentials(email_value, password):
-                st.session_state.authenticated = True
-                st.session_state.user_email = email_value.lower()
-                st.session_state.login_email_error = ""
-                st.session_state.login_password_error = ""
-                queue_toast(f"Welcome back, {email_value.lower()}!", "success")
-                st.rerun()
-
-            # Auth failed after fields are filled — toast on submit is OK
-            st.session_state.login_email_error = ""
-            st.session_state.login_password_error = ""
-            toast_error("Invalid email or password.")
-
-        st.caption("Enter your registered email and password to continue.")
+    st.caption("Your account is saved locally. Passwords are stored as salted hashes only.")
+    st.markdown('<p class="auth-switch">Already have an account?</p>', unsafe_allow_html=True)
+    if st.button("Back to sign in", use_container_width=True, key="goto_login"):
+        _switch_auth_view("login")
 
 
-def render_app_header() -> None:
+def login_page(cookie_manager) -> None:
+    """Auth gate — Sign in or Create account (local credential store)."""
+    _inject_auth_styles()
+
+    _spacer, center, _spacer2 = st.columns([1, 1.2, 1])
+    with center:
+        if st.session_state.auth_view == "register":
+            register_form()
+        else:
+            login_form(cookie_manager)
+
+
+def render_app_header(cookie_manager) -> None:
     """Brand + signed-in text in content; Log out fixed at extreme top-right."""
     if "logout" in st.query_params:
         del st.query_params["logout"]
@@ -311,7 +660,7 @@ def render_app_header() -> None:
     with logout_col:
         st.markdown('<span class="logout-corner-marker"></span>', unsafe_allow_html=True)
         if st.button("Log out", type="secondary", key="header_logout"):
-            logout()
+            logout(cookie_manager, reason="manual")
 
     brand_col, user_col = st.columns([3, 2.5], vertical_alignment="center")
     with brand_col:
@@ -417,8 +766,16 @@ def search_page(
         unsafe_allow_html=True,
     )
 
+    user_email = st.session_state.user_email or ""
     price_floor = float(catalog["price"].min())
     price_ceil = float(catalog["price"].max())
+    catalog_titles = catalog["title"].dropna().astype(str).tolist()
+
+    # Apply a history click from the sidebar before widgets render
+    pending_query = st.session_state.pop("_pending_search", None)
+    if pending_query is not None:
+        st.session_state["search_query_input"] = pending_query
+        st.session_state["_run_pending_search"] = True
 
     with st.sidebar:
         st.markdown("**Search**")
@@ -438,26 +795,55 @@ def search_page(
         )
         min_rating = st.slider("Minimum rating", 0.0, 5.0, 0.0, 0.5)
 
+        st.markdown("---")
+        st.markdown("**Search History**")
+        history = get_search_history(user_email, limit=SEARCH_HISTORY_MAX_PER_USER)
+        if history:
+            hist_click = render_search_history_list(history, key="sidebar_search_history")
+            if isinstance(hist_click, dict):
+                nonce = hist_click.get("nonce")
+                if nonce != st.session_state.get("_last_hist_nonce"):
+                    st.session_state["_last_hist_nonce"] = nonce
+                    past_q = str(hist_click.get("query") or "").strip()
+                    if past_q:
+                        st.session_state["_pending_search"] = past_q
+                        st.rerun()
+            if st.button("Clear history", key="clear_search_history"):
+                clear_search_history(user_email)
+                queue_toast("Search history cleared.", "success")
+                st.rerun()
+        else:
+            st.caption("Your recent searches will appear here.")
+
     # Fixed defaults (weights justified in reports; keeps UI minimal)
     top_k = DEFAULT_TOP_K
     sem_w = DEFAULT_SEMANTIC_WEIGHT
 
-    with st.form("search_form", clear_on_submit=False):
-        input_col, btn_col = st.columns([8, 1], gap="small", vertical_alignment="bottom")
-        with input_col:
-            query = st.text_input(
-                "Search query",
-                placeholder="e.g. cozy bedding for better sleep",
-                label_visibility="collapsed",
-                key="search_query_input",
-            )
-        with btn_col:
-            submitted = st.form_submit_button("Search", type="primary", use_container_width=True)
+    current_query = str(st.session_state.get("search_query_input") or "")
+    ac_result = render_search_autocomplete(
+        history=get_search_history(user_email, limit=10),
+        product_titles=catalog_titles,
+        current_query=current_query,
+        placeholder="Click for recent searches, or type to match products…",
+    )
 
-    # Always use the value submitted from the input (including empty string)
-    submitted_query = (query or "").strip()
+    run_pending = st.session_state.pop("_run_pending_search", False)
+    submitted_query = str(st.session_state.get("search_query_input") or "").strip()
 
-    if submitted and submitted_query:
+    # Component returns a value when Search / Enter / suggestion is chosen
+    if isinstance(ac_result, dict) and ac_result.get("action") == "search":
+        nonce = ac_result.get("nonce")
+        if nonce != st.session_state.get("_last_ac_nonce"):
+            st.session_state["_last_ac_nonce"] = nonce
+            # Always trust the current box value (including empty → clear prior results)
+            submitted_query = str(ac_result.get("query") or "").strip()
+            st.session_state["search_query_input"] = submitted_query
+            run_pending = True
+
+    should_search = run_pending
+    submitted = run_pending
+
+    if should_search and submitted_query:
         cat_filter = None if category == "All" else category
         filters = dict(
             category=cat_filter,
@@ -471,13 +857,16 @@ def search_page(
             )
         st.session_state["search_results"] = results
         st.session_state["search_query"] = submitted_query
+        add_search_history(user_email, submitted_query)
         if results:
-            toast_success(f"Found {len(results)} result(s) for your search.")
+            queue_toast(f"Found {len(results)} result(s) for your search.", "success")
         else:
-            toast_warning("No products matched your query and filters.")
+            queue_toast("No products matched your query and filters.", "warning")
+        # Rerun so sidebar history reflects this search immediately
+        st.rerun()
     elif submitted and not submitted_query:
-        # Empty search must clear previous results — do not keep old query/results
-        for key in ("search_results", "search_query"):
+        # Empty Search clears previous results — do not keep old query/results
+        for key in ("search_results", "search_query", "search_query_input"):
             st.session_state.pop(key, None)
         toast_warning("Please enter a search query.")
 
@@ -518,17 +907,28 @@ def search_page(
 
 def main() -> None:
     init_auth_state()
+    cookie_manager = get_cookie_manager()
+    sync_auth_session(cookie_manager)
+
     # Always prefer a clean base URL (no ?logout=1)
     if "logout" in st.query_params:
         del st.query_params["logout"]
     show_pending_toasts()
 
     if not st.session_state.authenticated:
-        login_page()
+        # Give cookie / localStorage bridge a chance before painting sign-in
+        if st.session_state.get("_sps_suppress_login"):
+            inject_session_restore_bridge()
+            return
+        login_page(cookie_manager)
         return
 
+    inject_idle_logout_watchdog()
+    idle_session_watchdog()
+    if st.session_state.session_id:
+        persist_session_id_to_browser(st.session_state.session_id)
     inject_app_styles()
-    render_app_header()
+    render_app_header(cookie_manager)
 
     try:
         vector, keyword, hybrid, recommender, catalog = load_search_stack()

@@ -91,7 +91,7 @@ Search form text_input (key=search_query_input)
 
 ### 3. Filters
 
-Sidebar → `category`, `min_price`/`max_price`, `min_rating` → passed into search → applied after retrieval.
+Sidebar → `category`, `min_price`/`max_price`, `min_rating` → search ranks first → `FilterEngine` (`filter_engine.py`) applies constraints via Metadata Store.
 
 ### 4. Catalog & embeddings
 
@@ -149,6 +149,7 @@ Dependencies, how to run, ignore `embeddings/` / `visuals/` / venv, etc.
 | `vector_search.py` | FAISS semantic search | Task 2 |
 | `bm25_search.py` | Keyword baseline | Task 3 |
 | `hybrid_search.py` | Blend scores | Task 3 |
+| `filter_engine.py` | Post-ranking Category / Price / Rating filters + Metadata Store | Task 3 |
 | `recommender.py` | Similar + co-occurrence | Task 4 |
 | `clustering.py` | KMeans + UMAP file | Task 4 deliverable |
 | `evaluation.py` | Precision@k | Task 5 deliverable |
