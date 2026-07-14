@@ -253,7 +253,7 @@ def login_page() -> None:
         )
 
         with st.form("login_form", clear_on_submit=False):
-            email = st.text_input("Email", placeholder="you@company.com")
+            email = st.text_input("Email", placeholder="example@gmail.com")
             if email_error:
                 st.markdown(f'<p class="field-error">{email_error}</p>', unsafe_allow_html=True)
 
