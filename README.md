@@ -44,7 +44,7 @@ Built with Sentence Transformers, FAISS, BM25, and Streamlit.
 - Comparison write-up → `reports/search_comparison.md`
 
 ### Docs for management
-- **15 Jul 2026 enhancements:** [`docs/ENHANCEMENTS_2026-07-15.md`](docs/ENHANCEMENTS_2026-07-15.md)
+- **Enhancement report (incl. 15 Jul 2026 detail):** [`docs/ENHANCEMENT_REPORT.md`](docs/ENHANCEMENT_REPORT.md)
 - Full doc index: [`docs/README.md`](docs/README.md)
 
 ---

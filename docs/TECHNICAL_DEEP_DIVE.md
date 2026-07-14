@@ -28,8 +28,7 @@ Updated for the **current** app: accounts + sessions, search UI with autocomplet
 | `src/clustering.py` | KMeans + UMAP → `visuals/` |
 | `src/evaluation.py` | P@k → `reports/` |
 | `scripts/run_pipeline.py` | Offline build of all artifacts |
-| `docs/` | Architecture, DFD, management enhancement note, etc. |
-| `docs/ENHANCEMENTS_2026-07-15.md` | Management briefing for 15 Jul 2026 |
+| `docs/` | Architecture, DFD, enhancement report, etc. |
 
 ---
 

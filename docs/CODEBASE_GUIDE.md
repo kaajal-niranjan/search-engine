@@ -205,14 +205,13 @@ Builds everything offline:
 
 | Doc | Purpose |
 |-----|---------|
-| `ENHANCEMENTS_2026-07-15.md` | Management briefing (15 Jul 2026) |
 | `CODEBASE_GUIDE.md` | This file |
 | `ARCHITECTURE.md` | System diagram |
 | `DATA_FLOW.md` | Login/session/search/pipeline flows |
 | `SCOPE_AND_IMPLEMENTATION.md` | Scope vs UI |
 | `TECHNICAL_DEEP_DIVE.md` | Review talking points |
 | `ENHANCEMENTS.md` | Roadmap |
-| `ENHANCEMENT_REPORT.md` | Before/after of UI & features |
+| `ENHANCEMENT_REPORT.md` | Before/after + 15 Jul 2026 management detail |
 | `README.md` | Doc index |
 
 ---

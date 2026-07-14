@@ -24,7 +24,7 @@ Future work and what is already done in the **current** codebase.
 
 Library modules still present (not emphasized in UI): `query_intent.py`, `search_explanation.py`, `search_with_explanation()`.
 
-**Management summary (15 Jul 2026):** [ENHANCEMENTS_2026-07-15.md](ENHANCEMENTS_2026-07-15.md)
+**Management summary (15 Jul 2026):** see [ENHANCEMENT_REPORT.md](ENHANCEMENT_REPORT.md) Part D.
 
 ---
 
