@@ -12,31 +12,37 @@ How data moves today: **login → search → recommendations**, plus the **offli
 
 ---
 
-## 1. Authentication Data Flow
+## 1. Authentication & Session Data Flow
 
 ```mermaid
 flowchart TD
-    A[App starts] --> B{authenticated?}
-    B -->|No| C[Login page only]
-    B -->|Yes| D[Header + Search UI]
-    C --> E[Email + password submitted]
-    E --> F[auth.verify_credentials]
-    F -->|OK| G[Set session + success toast]
-    G --> D
-    F -->|Fail| H[Error toast]
-    H --> C
-    D --> I{Log out?}
-    I -->|Yes| J[Clear session + search state]
-    J --> K[Info toast]
+    A[App starts] --> B{Valid session?}
+    B -->|No| C[Sign in / Create account]
+    B -->|Yes idle OK| D[Header + Search UI]
+    B -->|Yes but idle| L[Clear session → Sign in]
+    C --> E[Email + password]
+    E --> F{Sign in or Register?}
+    F -->|Sign in| G[auth.verify_credentials]
+    F -->|Register| R[auth.register_user → users.json]
+    R --> G2[create_session]
+    G -->|OK| G2
+    G2 --> H[Persist session id in browser]
+    H --> D
+    G -->|Fail| I[Error toast]
+    I --> C
+    D --> J{Log out or idle timeout?}
+    J -->|Yes| K[Clear session + search state]
     K --> C
 ```
 
 | Step | Example |
 |------|---------|
-| Open app | Only Sign in is available |
-| Valid login | Session set → Search UI |
-| Empty / wrong password | Toast error; stay on login |
-| Log out | Back to login; search results cleared |
+| Open app | Sign in (or restore session after refresh) |
+| Create account | New row in `data/users.json` (hashed password) |
+| Valid login | Session file + browser id → Search UI |
+| Refresh | Still signed in if not idle-expired |
+| Idle timeout | Auto log-out (see `SESSION_IDLE_TIMEOUT_SECONDS`) |
+| Log out | Back to sign in; search results cleared |
 
 Passwords: typed → PBKDF2 with stored salt → compare digests (never decrypted).
 
@@ -48,30 +54,38 @@ Passwords: typed → PBKDF2 with stored salt → compare digests (never decrypte
 sequenceDiagram
     participant U as User
     participant UI as app.py
+    participant AC as Autocomplete
+    participant Hist as Search History
     participant T as Toast
     participant H as Hybrid / Semantic / BM25
+    participant F as Filter Engine
     participant R as Recommender
 
-    U->>UI: Query + mode + filters + Search
+    U->>AC: Type / pick suggestion / Search
+    AC->>UI: query (or empty)
     alt empty query
         UI->>UI: Clear previous results
         UI->>T: warning toast
     else non-empty query
-        UI->>H: search(query, filters, top_k=10)
-        H-->>UI: ranked SearchResult list
+        UI->>H: search(query, top_k)
+        H->>F: ranked candidates + filters
+        F-->>UI: filtered SearchResult list
+        UI->>Hist: add_search_history(user, query)
         UI->>T: success / no-match toast
-        UI-->>U: product cards
+        UI-->>U: product cards + updated sidebar history
         U->>UI: pick a product
         UI->>R: recommend(product_id)
         R-->>UI: similar products
     end
+    U->>Hist: click past query
+    Hist->>UI: re-run search
 ```
 
 ### Detailed search path (Hybrid mode)
 
 ```
 User (logged in)
-  Query: "cotton"
+  Query via autocomplete box (or history click)
   Mode: Hybrid
   Filters: category / price / rating (optional)
       ↓
@@ -87,6 +101,7 @@ Filter Engine (category, price range, rating via Metadata Store)
 top 10 product cards
   (title, category, rating, description, price)
       ↓
+append query to per-user search history
 optional: Similar Products via recommender
 ```
 
@@ -98,6 +113,15 @@ Submit with blank input
   → clear search_results + search_query from session
   → toast: "Please enter a search query."
   → show empty state
+```
+
+### Search history & autocomplete
+
+```
+Focus / empty box → recent history suggestions
+Type → matching product titles (+ history matches)
+Successful search → data/search_history.json updated
+Sidebar list → single-line ellipsis + tooltip; scrollable; click to re-run
 ```
 
 ---
@@ -175,26 +199,29 @@ Position: top-right (`src/notifications.py` CSS).
 
 ```
 1. set_page_config + inject_toast_styles
-2. init_auth_state + show_pending_toasts
-3. if not authenticated → login_page() STOP
-4. render_app_header()
-5. load_search_stack() (cached)
-6. search_page() — sidebar mode/filters + main search
+2. restore session from browser if present and not idle
+3. show_pending_toasts
+4. if not authenticated → sign-in / register STOP
+5. render_app_header()
+6. load_search_stack() (cached)
+7. search_page() — sidebar mode/filters/history + autocomplete search
 ```
 
 ---
 
 ## 8. Example End-to-End Trace
 
-**User:** logs in → searches `"warm jacket for winter trip"` (Hybrid) → picks a jacket → sees similar items → logs out.
+**User:** registers → searches `"warm jacket for winter trip"` (Hybrid) → sees history entry → picks a jacket → similar items → refreshes (still signed in) → logs out.
 
 | Stage | Result |
 |-------|--------|
-| Auth | Welcome toast; Search unlocked |
-| Hybrid search | Intent-style clothing products ranked |
+| Auth | Account created; welcome toast; Search unlocked |
+| Hybrid search | Intent-style clothing products ranked → filtered |
+| History | Query appears in sidebar immediately |
 | Cards | Clean product info (no score UI) |
 | Recommendations | Similar jackets / winter wear |
-| Logout | Info toast; login gate again |
+| Refresh | Session restored |
+| Logout | Info toast; sign-in gate again |
 
 ---
 
@@ -203,7 +230,9 @@ Position: top-right (`src/notifications.py` CSS).
 | File | Created by | Consumed by |
 |------|------------|-------------|
 | `data/products_clean.csv` | Preprocessing | Search, recommender, UI filters |
+| `data/users.json` | Registration / seed | Auth |
+| `data/sessions.json` | Login / touch | Session restore + idle check |
+| `data/search_history.json` | Successful searches | Sidebar history + autocomplete |
 | `embeddings/*` | Embedding + FAISS build | Vector search, recommender |
 | `visuals/cluster_visualization.png` | Clustering | Reviewers / Drive pack (not UI) |
 | `reports/evaluation_results.csv` | Evaluation | Reviewers / Drive pack (not UI) |
-| Hashes in `auth.py` | Manual setup | Login verification |

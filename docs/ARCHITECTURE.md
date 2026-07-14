@@ -1,12 +1,12 @@
 # Architecture Diagram — Semantic Product Search Engine
 
-This document explains **how the application is built** today: login, a minimal search UI, hybrid retrieval, recommendations, and offline clustering/evaluation artifacts.
+This document explains **how the application is built** today: sign-in/register, persistent session, a search UI with autocomplete and history, hybrid retrieval, Filter Engine, recommendations, and offline clustering/evaluation artifacts.
 
 ---
 
 ## What This Application Does (In One Sentence)
 
-An **e-commerce-style product search engine** with **secure login** that finds products by **meaning** (not only keywords), blends semantic + BM25 scores, recommends similar items, and keeps clustering/evaluation as **pipeline deliverables** (not sidebar pages).
+An **e-commerce-style product search engine** with **secure accounts and sessions** that finds products by **meaning** (not only keywords), blends semantic + BM25 scores, filters after ranking, assists typing with autocomplete/history, recommends similar items, and keeps clustering/evaluation as **pipeline deliverables** (not sidebar pages).
 
 **Example:** User searches *"warm jacket for winter trip"* → winter clothing appears even when titles don’t use that exact phrase.
 
@@ -18,15 +18,17 @@ An **e-commerce-style product search engine** with **secure login** that finds p
 flowchart TB
     subgraph UserLayer["👤 User Layer"]
         USER[Shopper / Reviewer]
-        LOGIN[Login Page<br/>email + password]
+        LOGIN[Sign in / Create account]
         HEADER[Header<br/>email + Log out]
-        UI[Search UI<br/>mode + filters + product cards]
+        UI[Search UI<br/>autocomplete + mode + filters + cards]
+        HIST[Sidebar Search History]
         TOAST[Toast Notifications<br/>top-right]
         RECUI[Similar Products]
     end
 
-    subgraph AuthLayer["🔐 Auth Layer"]
-        AUTH[auth.py<br/>PBKDF2 salted hashes]
+    subgraph AuthLayer["🔐 Auth & Session"]
+        AUTH[auth.py<br/>PBKDF2 + users.json]
+        SESS[session.py + browser_cookies]
         SESSION[Session State]
     end
 
@@ -34,6 +36,8 @@ flowchart TB
         HYB[Hybrid Search 70/30]
         SEM[Semantic FAISS]
         KW[BM25 Keywords]
+        FILT[Filter Engine]
+        ASSIST[search_assist<br/>history + suggestions]
     end
 
     subgraph MLCore["🧠 ML Core"]
@@ -45,6 +49,9 @@ flowchart TB
 
     subgraph DataLayer["💾 Data & Artifacts"]
         CLEAN[products_clean.csv]
+        USERS[users.json]
+        SESSF[sessions.json]
+        HISTF[search_history.json]
         NPY[embeddings.npy]
         INDEX[faiss_index.bin]
         COOC[cooccurrence.parquet]
@@ -59,16 +66,21 @@ flowchart TB
         EVAL[SearchEvaluator]
     end
 
-    USER --> LOGIN --> AUTH --> SESSION
+    USER --> LOGIN --> AUTH --> SESS --> SESSION
     SESSION -->|authenticated| HEADER
     SESSION -->|authenticated| UI
+    SESSION -->|authenticated| HIST
     UI --> TOAST
     LOGIN --> TOAST
-    HEADER -->|Log out| SESSION
-
+    HEADER -->|Log out| SESS
+    HIST --> ASSIST
+    UI --> ASSIST
     UI --> HYB
     UI --> SEM
     UI --> KW
+    HYB --> FILT
+    SEM --> FILT
+    KW --> FILT
     UI --> RECUI --> REC
 
     HYB --> SEM
@@ -78,6 +90,9 @@ flowchart TB
     SEM --> CLEAN
     KW --> CLEAN
     REC --> NPY
+    AUTH --> USERS
+    SESS --> SESSF
+    ASSIST --> HISTF
     REC --> COOC
 
     PIPE --> PREP --> CLEAN
@@ -95,10 +110,10 @@ flowchart TB
 
 | Screen | What the user sees |
 |--------|--------------------|
-| **Login** | Default route — only page before sign-in |
+| **Sign in / Create account** | Default route — only pages before auth |
 | **Header** | App title, signed-in email, **Log out** |
-| **Search sidebar** | Mode (Hybrid / Semantic / BM25) + filters (category, price, rating) |
-| **Main area** | Search box, product cards, similar products |
+| **Search sidebar** | Mode + filters + **Search History** |
+| **Main area** | Autocomplete search, product cards, similar products |
 | **Toasts** | Success / error / warning at top-right |
 
 **Not in the UI (by design):** Clusters page, Evaluation page, score metrics, “Why this result?” panels, weight/top-k sliders.
@@ -107,13 +122,15 @@ Those features still exist as **code + files** for the project deliverables.
 
 ---
 
-### 2. Auth Layer
+### 2. Auth & Session Layer
 
 | Piece | File | Role |
 |-------|------|------|
-| Credential store | `src/auth.py` | Email → `salt:hash` (PBKDF2) |
+| Credential store | `src/auth.py` + `data/users.json` | Register + email → `salt:hash` (PBKDF2) |
 | Verify | `verify_credentials()` | Re-hash typed password; compare digests |
-| Session | `st.session_state` | `authenticated`, `user_email` |
+| Server session | `src/session.py` | Create / touch / idle expire |
+| Browser bridge | `src/browser_cookies.py` | Persist session id across refresh |
+| UI session | `st.session_state` | `authenticated`, `user_email`, search state |
 
 Passwords are never shown in the UI and never stored as plain text.
 
@@ -126,6 +143,7 @@ Passwords are never shown in the UI and never stored as plain text.
 | Semantic | `vector_search.py` | Meaning via FAISS |
 | BM25 | `bm25_search.py` | Keyword baseline |
 | Hybrid | `hybrid_search.py` | Default 70% semantic + 30% BM25 |
+| Assist | `search_assist.py` + frontend components | Autocomplete + history |
 
 **Filters (Task 3 / Module 4):** category, price range, minimum rating — applied post-ranking by `filter_engine.py` using Metadata Store (D5: ID, Category, Price, Rating).
 

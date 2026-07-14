@@ -1,6 +1,6 @@
 # Technical Deep Dive — Codebase Review
 
-Updated for the **current** app: login-gated **search-only** UI, file-based cluster/eval deliverables.
+Updated for the **current** app: accounts + sessions, search UI with autocomplete/history, Filter Engine, file-based cluster/eval deliverables.
 
 ---
 
@@ -8,23 +8,28 @@ Updated for the **current** app: login-gated **search-only** UI, file-based clus
 
 | Path | Role today |
 |------|------------|
-| `app.py` | Login, header, logout, search UI, toasts, recommendations |
-| `src/auth.py` | PBKDF2 login verification |
+| `app.py` | Sign in/register, session, header, search UI, history, toasts, recommendations |
+| `src/auth.py` | Register + PBKDF2 verify; `users.json` |
+| `src/session.py` / `browser_cookies.py` | Persistent session + idle logout |
 | `src/notifications.py` | Top-right toasts |
-| `src/config.py` | Paths, model, hybrid defaults |
+| `src/config.py` | Paths, model, session/history defaults |
 | `src/preprocessing.py` | Catalog + `search_text` + EDA |
 | `src/embedding_generator.py` | Batch embeddings + query cache |
 | `src/vector_search.py` | FAISS semantic search |
 | `src/bm25_search.py` | BM25 keyword search |
 | `src/hybrid_search.py` | Score fusion (+ optional explain API unused by UI) |
 | `src/filter_engine.py` | Post-ranking Filter Engine + Metadata Store (D5) |
+| `src/search_assist.py` | Search history + suggestion helpers |
+| `src/search_autocomplete.py` / `frontend_search_ac/` | Under-input autocomplete |
+| `src/search_history_list.py` / `frontend_search_history/` | Sidebar history list |
 | `src/query_intent.py` | Intent helpers (available; not shown in minimal UI) |
 | `src/search_explanation.py` | Score breakdown dataclass (library; not shown in UI) |
 | `src/recommender.py` | Similar products |
 | `src/clustering.py` | KMeans + UMAP → `visuals/` |
 | `src/evaluation.py` | P@k → `reports/` |
 | `scripts/run_pipeline.py` | Offline build of all artifacts |
-| `docs/` | Architecture, DFD, scope, this guide, etc. |
+| `docs/` | Architecture, DFD, management enhancement note, etc. |
+| `docs/ENHANCEMENTS_2026-07-15.md` | Management briefing for 15 Jul 2026 |
 
 ---
 
@@ -32,9 +37,11 @@ Updated for the **current** app: login-gated **search-only** UI, file-based clus
 
 | Capability | In Streamlit UI? | Still in codebase / files? |
 |------------|------------------|----------------------------|
-| Login / logout / toasts | Yes | Yes |
+| Sign in / register / logout / toasts | Yes | Yes |
+| Persistent session / idle logout | Yes | Yes |
 | Hybrid / Semantic / BM25 | Yes | Yes |
-| Category / price / rating filters | Yes | Yes |
+| Category / price / rating filters | Yes | Yes (Filter Engine) |
+| Autocomplete + search history | Yes | Yes |
 | Product cards + similar products | Yes | Yes |
 | Cluster visualization | **No page** | Yes → `visuals/` via pipeline |
 | Evaluation table | **No page** | Yes → `reports/` via pipeline |

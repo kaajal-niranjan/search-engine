@@ -17,7 +17,7 @@ SESSIONS_STORE_PATH = DATA_DIR / "sessions.json"  # active browser sessions
 
 # Browser session (cookie) — keep signed-in across refresh; idle timeout
 SESSION_COOKIE_NAME = "sps_session"
-SESSION_IDLE_TIMEOUT_SECONDS = 600 # auto-logout after 1 minute of inactivity
+SESSION_IDLE_TIMEOUT_SECONDS = 600  # auto-logout after 10 minutes of inactivity
 SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 12  # hard cap (12h)
 EMBEDDINGS_PATH = EMBEDDINGS_PATH_NPY = EMBEDDINGS_DIR / "product_embeddings.npy"
 PRODUCT_IDS_PATH = EMBEDDINGS_DIR / "product_ids.npy"

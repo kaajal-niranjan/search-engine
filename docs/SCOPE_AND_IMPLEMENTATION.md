@@ -20,22 +20,26 @@ Current understanding of **scope**, **what the UI shows**, and **how the system 
 
 | In UI | Not in UI (still in repo) |
 |-------|---------------------------|
-| Login + logout | Cluster **page** |
-| Search mode Hybrid / Semantic / BM25 | Evaluation **page** |
-| Filters: category, price, rating | Score / “why ranked” panels |
-| Product cards + similar products | Weight / top-k sliders |
+| Sign in / Create account + logout | Cluster **page** |
+| Persistent session + idle logout | Evaluation **page** |
+| Search mode Hybrid / Semantic / BM25 | Score / “why ranked” panels |
+| Filters: category, price, rating | Weight / top-k sliders |
+| Autocomplete + Search History | — |
+| Product cards + similar products | — |
 | Toast notifications | — |
 
-**Rationale:** Brief asks for a *simple search UI with filters and product cards*. Cluster plot and evaluation table are **file deliverables**, produced by the pipeline.
+**Rationale:** Brief asks for a *simple search UI with filters and product cards*. Cluster plot and evaluation table are **file deliverables**, produced by the pipeline. 15 Jul 2026 additions improve account, session, and query assist without returning to a multi-page demo UI.
 
 ---
 
 ## 2. In Scope Features (Built)
 
-- Login gate (email/password), hashed credentials, logout  
+- Sign in / register, hashed credentials, logout  
+- Persistent session + idle auto-logout  
 - Toast notifications (top-right)  
 - Semantic / BM25 / hybrid search  
-- Structured filters  
+- Filter Engine (post-ranking structured filters)  
+- Autocomplete + per-user search history  
 - Recommendations (content + simulated co-occurrence)  
 - Offline clustering (KMeans + UMAP image)  
 - Offline evaluation (15 queries, P@5 / P@10)  
@@ -54,10 +58,11 @@ Current understanding of **scope**, **what the UI shows**, and **how the system 
 
 ## 4. Technical Implementation Summary
 
-### Auth — `src/auth.py` + `app.py`
+### Auth — `src/auth.py` + `src/session.py` + `app.py`
 
-- Default route = login  
-- PBKDF2-HMAC-SHA256 salted hashes  
+- Default route = sign in (create account available)  
+- PBKDF2-HMAC-SHA256 salted hashes in `data/users.json`  
+- Session survives refresh; idle timeout auto log-out  
 - Empty search clears previous results (does not reuse last query)  
 
 ### Search UI — `app.py`
@@ -66,9 +71,10 @@ Current understanding of **scope**, **what the UI shows**, and **how the system 
 Sidebar:
   Mode: Hybrid | Semantic | BM25
   Filters: Category, Price range, Minimum rating
+  Search History: compact scrollable list (click to re-run)
 
 Main:
-  Query + Search button
+  Autocomplete query + Search button
   Product cards (title, category, rating, description, price)
   Similar Products
 ```

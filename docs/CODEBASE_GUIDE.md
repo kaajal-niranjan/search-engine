@@ -71,23 +71,28 @@ search-engine/
 ### 1. Login email & password
 
 ```
-Login form (app.py)
-  → is_valid_email / verify_credentials (auth.py)
-  → hash typed password with stored salt (PBKDF2)
-  → compare digests (no decrypt)
+Sign in / Create account (app.py)
+  → is_valid_email / verify_credentials or register_user (auth.py)
+  → hash password with salt (PBKDF2); store/read data/users.json
+  → create_session (session.py) + persist session id in browser
   → session authenticated + welcome toast
 ```
+
+Refresh restores session from cookie/local bridge if not idle-expired.
 
 ### 2. Search query
 
 ```
-Search form text_input (key=search_query_input)
-  → on Submit, read submitted string
+Autocomplete search box (search_autocomplete + frontend_search_ac)
+  → action search with query string (or empty)
   → if empty: clear previous results + warning toast
   → if not empty: run_search(mode, filters) → session results
+  → add_search_history(email, query) → sidebar list refreshes
 ```
 
 **Modes:** Hybrid → `HybridSearch.search` · Semantic → `VectorSearch` · BM25 → `KeywordSearch`.
+
+Sidebar **Search History** (`search_history_list` + `frontend_search_history`): click row → re-run that query.
 
 ### 3. Filters
 
@@ -119,15 +124,17 @@ Hardcoded / pipeline-driven:
 
 **Contains now:**
 
-- Login gate + logout header  
+- Sign in / Create account + logout header  
+- Persistent session + idle logout  
 - Toasts  
-- Search sidebar (mode + filters)  
+- Search sidebar (mode + filters + search history)  
+- Autocomplete search box  
 - Product cards + similar products  
 - Empty-query clears old results  
 
 **Does not contain:** Clusters page, Evaluation page.
 
-**How input is taken:** Forms and sidebar widgets → `src/` functions.
+**How input is taken:** Forms, custom components, and sidebar widgets → `src/` functions.
 
 ---
 
@@ -141,8 +148,10 @@ Dependencies, how to run, ignore `embeddings/` / `visuals/` / venv, etc.
 
 | File | Purpose | Why |
 |------|---------|-----|
-| `config.py` | Paths, model name, `DEFAULT_TOP_K`, hybrid weights | Single place for defaults |
-| `auth.py` | PBKDF2 verify | Secure login |
+| `config.py` | Paths, model name, session/history limits, hybrid weights | Single place for defaults |
+| `auth.py` | Register + PBKDF2 verify; local `users.json` | Secure login / registration |
+| `session.py` | Server-side sessions + idle timeout | Stay signed in across refresh |
+| `browser_cookies.py` | Session id cookie / localStorage bridge | Browser persistence |
 | `notifications.py` | Toasts + top-right CSS | Non-blocking feedback |
 | `preprocessing.py` | Synthetic catalog + `search_text` + EDA | Task 1 |
 | `embedding_generator.py` | Encode products/queries | Task 2 |
@@ -150,6 +159,11 @@ Dependencies, how to run, ignore `embeddings/` / `visuals/` / venv, etc.
 | `bm25_search.py` | Keyword baseline | Task 3 |
 | `hybrid_search.py` | Blend scores | Task 3 |
 | `filter_engine.py` | Post-ranking Category / Price / Rating filters + Metadata Store | Task 3 |
+| `search_assist.py` | Per-user history + suggestion helpers | Search UX |
+| `search_autocomplete.py` | Streamlit component: under-input suggestions | Search UX |
+| `search_history_list.py` | Streamlit component: sidebar history list | Search UX |
+| `frontend_search_ac/` | Autocomplete HTML/JS | Component UI |
+| `frontend_search_history/` | History list HTML/JS | Component UI |
 | `recommender.py` | Similar + co-occurrence | Task 4 |
 | `clustering.py` | KMeans + UMAP file | Task 4 deliverable |
 | `evaluation.py` | Precision@k | Task 5 deliverable |
@@ -179,7 +193,7 @@ Builds everything offline:
 
 | Folder | Contents | UI reads it? |
 |--------|----------|--------------|
-| `data/` | raw + clean CSV | Yes (clean) |
+| `data/` | raw + clean CSV; local `users.json`, `sessions.json`, `search_history.json` | Yes (clean + runtime stores) |
 | `embeddings/` | vectors, FAISS, co-occurrence | Yes |
 | `visuals/` | cluster PNG | No (deliverable) |
 | `reports/` | EDA, eval CSV/txt, comparison md | No (deliverable) |
@@ -191,9 +205,10 @@ Builds everything offline:
 
 | Doc | Purpose |
 |-----|---------|
+| `ENHANCEMENTS_2026-07-15.md` | Management briefing (15 Jul 2026) |
 | `CODEBASE_GUIDE.md` | This file |
 | `ARCHITECTURE.md` | System diagram |
-| `DATA_FLOW.md` | Login/search/pipeline flows |
+| `DATA_FLOW.md` | Login/session/search/pipeline flows |
 | `SCOPE_AND_IMPLEMENTATION.md` | Scope vs UI |
 | `TECHNICAL_DEEP_DIVE.md` | Review talking points |
 | `ENHANCEMENTS.md` | Roadmap |

@@ -9,16 +9,22 @@ Future work and what is already done in the **current** codebase.
 | Item | Notes |
 |------|--------|
 | Semantic + BM25 + Hybrid | Core brief Tasks 2–3 |
-| Filters (category, price, rating) | Task 3 |
+| Filters (category, price, rating) | Task 3 — `filter_engine.py` after ranking |
 | Recommendations + co-occurrence | Task 4 |
 | Clustering + UMAP file | Task 4 deliverable via pipeline |
 | Evaluation P@k + comparison write-up | Task 5 deliverable via pipeline/reports |
 | Login + logout + hashed passwords | Extra UX/security |
+| User registration + local `users.json` store | 15 Jul 2026 |
+| Persistent session + idle auto-logout | 15 Jul 2026 |
 | Toast notifications | Extra UX |
+| Search autocomplete (under input) | 15 Jul 2026 |
+| Per-user search history (sidebar) | 15 Jul 2026 |
 | Minimal search-only UI | Matches “simple Streamlit search UI” |
 | Empty-query clears old results | Bugfix |
 
 Library modules still present (not emphasized in UI): `query_intent.py`, `search_explanation.py`, `search_with_explanation()`.
+
+**Management summary (15 Jul 2026):** [ENHANCEMENTS_2026-07-15.md](ENHANCEMENTS_2026-07-15.md)
 
 ---
 
@@ -34,7 +40,7 @@ Library modules still present (not emphasized in UI): `query_intent.py`, `search
 ## Tier 2 — Production
 
 5. Docker + CI  
-6. Secrets / env-based config and real user store  
+6. Secrets / env-based config and real user store (DB)  
 7. Incremental embedding updates  
 
 ---
@@ -59,7 +65,7 @@ Not required by the written brief if file deliverables exist.
 ## Roadmap Snapshot
 
 ```
-Now     → Minimal search UI + full offline deliverables
+Now     → Login/register + session + autocomplete/history + Filter Engine + offline deliverables
 Next    → Tests + API + Docker
 Later   → Re-rankers + real data
 ```
