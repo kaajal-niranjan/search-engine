@@ -18,8 +18,13 @@ from src.config import (
     FAISS_INDEX_PATH,
 )
 from src.embedding_generator import EmbeddingGenerator
+from src.filter_engine import FilterCriteria, FilterEngine
 
 logger = logging.getLogger(__name__)
+
+# Oversample candidates so post-ranking filters can still fill top_k
+_FILTER_CANDIDATE_MULTIPLIER = 5
+_DEFAULT_CANDIDATE_MULTIPLIER = 2
 
 
 @dataclass
@@ -50,6 +55,7 @@ class VectorSearch:
         self._index: Optional[faiss.IndexFlatIP] = None
         self._df: Optional[pd.DataFrame] = None
         self._records: Optional[list[dict]] = None
+        self._filter_engine = FilterEngine()
 
     def _load_catalog(self) -> pd.DataFrame:
         if self._df is None:
@@ -90,24 +96,6 @@ class VectorSearch:
             self.build_index()
         return self._index  # type: ignore[return-value]
 
-    def _passes_filters(
-        self,
-        row: dict,
-        category: Optional[str],
-        min_price: Optional[float],
-        max_price: Optional[float],
-        min_rating: Optional[float],
-    ) -> bool:
-        if category and row["category"] != category:
-            return False
-        if min_price is not None and row["price"] < min_price:
-            return False
-        if max_price is not None and row["price"] > max_price:
-            return False
-        if min_rating is not None and row["rating"] < min_rating:
-            return False
-        return True
-
     def _row_to_result(self, row: dict, score: float) -> SearchResult:
         return SearchResult(
             product_id=int(row["id"]),
@@ -127,28 +115,44 @@ class VectorSearch:
         min_price: Optional[float] = None,
         max_price: Optional[float] = None,
         min_rating: Optional[float] = None,
+        apply_filters: bool = True,
     ) -> list[SearchResult]:
-        """Semantic search using a precomputed query embedding."""
+        """
+        Semantic search using a precomputed query embedding.
+
+        Retrieves ranked FAISS neighbors first, then applies Filter Engine
+        (category / price / rating) when apply_filters is True.
+        """
         self._load_catalog()
         assert self._records is not None
 
-        has_filters = any(v is not None for v in (category, min_price, max_price, min_rating))
-        fetch_k = min(len(self._records), top_k * (5 if has_filters else 2))
+        criteria = FilterCriteria.from_kwargs(
+            category=category,
+            min_price=min_price,
+            max_price=max_price,
+            min_rating=min_rating,
+        )
+        # When filters are deferred (e.g. hybrid ranks first), return the full pool
+        mult = (
+            _FILTER_CANDIDATE_MULTIPLIER
+            if apply_filters and criteria.is_active()
+            else _DEFAULT_CANDIDATE_MULTIPLIER
+        )
+        fetch_k = min(len(self._records), top_k * mult)
 
         vec = np.ascontiguousarray(query_vec.astype(np.float32).reshape(1, -1))
         scores, indices = self.index.search(vec, fetch_k)
 
-        results: list[SearchResult] = []
+        ranked: list[SearchResult] = []
         for score, idx in zip(scores[0], indices[0]):
             if idx < 0:
                 continue
-            row = self._records[idx]
-            if not self._passes_filters(row, category, min_price, max_price, min_rating):
-                continue
-            results.append(self._row_to_result(row, score))
-            if len(results) >= top_k:
-                break
-        return results
+            ranked.append(self._row_to_result(self._records[idx], score))
+
+        if not apply_filters:
+            return ranked[:top_k]
+
+        return self._filter_engine.apply(ranked, criteria, top_k=top_k)
 
     def search(
         self,
@@ -159,8 +163,9 @@ class VectorSearch:
         max_price: Optional[float] = None,
         min_rating: Optional[float] = None,
         query_vec: Optional[np.ndarray] = None,
+        apply_filters: bool = True,
     ) -> list[SearchResult]:
-        """Semantic search: natural-language query -> ranked products."""
+        """Semantic search: natural-language query -> ranked (then filtered) products."""
         if query_vec is None:
             query_vec = self.embedding_generator.encode_query(query)
         return self.search_with_vector(
@@ -170,4 +175,5 @@ class VectorSearch:
             min_price=min_price,
             max_price=max_price,
             min_rating=min_rating,
+            apply_filters=apply_filters,
         )

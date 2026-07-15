@@ -1,150 +1,168 @@
 # Semantic Product Search & Recommendation Engine
 
-An e-commerce search system that understands **meaning**, not just keywords. Built with Sentence Transformers, FAISS, BM25, and hybrid re-ranking.
+An e-commerce-style search system that understands **meaning**, not just keywords — with **secure accounts**, **persistent sessions**, **autocomplete & search history**, hybrid ranking, and recommendations.
+
+Built with Sentence Transformers, FAISS, BM25, and Streamlit.
+
+---
+
+## What Makes This Different?
+
+| Traditional demo | This engine |
+|------------------|---------------|
+| Open access | **Login / register first**; search only after sign-in |
+| Visible passwords | **Salted PBKDF2 hashes**; local user store |
+| Lost session on refresh | **Persistent session** + idle auto-logout |
+| Keyword-only | **70% semantic + 30% BM25** hybrid |
+| Cluttered demo UI | **Search UI** with mode, filters, autocomplete, history, cards |
+
+**Try after login:** *"warm jacket for winter trip"* — relevant winter clothing without needing exact titles.
+
+---
 
 ## Features
 
-- **Semantic search** — natural-language queries like *"warm jacket for winter trip"*
-- **BM25 keyword baseline** — strong on exact product names and SKUs
-- **Hybrid ranking** — configurable blend (default 70% semantic / 30% BM25)
-- **Structured filters** — category, price range, minimum rating
-- **Recommendations** — content-based similarity + simulated co-occurrence
-- **Clustering** — KMeans on embeddings with UMAP visualization
-- **Evaluation** — Precision@5 and Precision@10 on 15 realistic queries
-- **Streamlit UI** — search, filters, recommendations, cluster & eval pages
+### Access & UX
+- Email/password **sign in** and **create account**
+- Session survives browser refresh; idle auto-logout; header **Log out**
+- Toast notifications (top-right)
+- Under-input **autocomplete** (recent searches + product titles)
+- Sidebar **Search History** (scrollable, single-line + tooltip, click to re-run)
+- Clean results: mode, filters, product cards, similar products
+- Empty Search clears previous results
 
-## Project Structure
+### Search & ML
+- Semantic search (FAISS + embeddings)
+- BM25 keyword baseline
+- Hybrid ranking (fixed 70/30 in UI; justified in reports)
+- Filter Engine after ranking: category, price range, minimum rating
+- Recommendations: content similarity + simulated co-occurrence
 
-```
-semantic-product-search/
-├── data/                  # Product catalog (raw + cleaned CSV)
-├── embeddings/            # Cached embeddings, FAISS index, cluster labels
-├── notebooks/             # Optional EDA notebook
-├── reports/               # EDA and evaluation reports
-├── scripts/
-│   └── run_pipeline.py    # End-to-end build script
-├── src/
-│   ├── config.py
-│   ├── preprocessing.py
-│   ├── embedding_generator.py
-│   ├── vector_search.py
-│   ├── bm25_search.py
-│   ├── hybrid_search.py
-│   ├── recommender.py
-│   ├── clustering.py
-│   └── evaluation.py
-├── visuals/               # Cluster UMAP plot
-├── app.py                 # Streamlit application
-├── requirements.txt
-└── README.md
-```
+### Project deliverables (pipeline — not sidebar pages)
+- Cluster visualization → `visuals/cluster_visualization.png`
+- Evaluation table → `reports/evaluation_results.csv`
+- Comparison write-up → `reports/search_comparison.md`
 
-## Setup
+### Docs for management
+- **Enhancement report (incl. 15 Jul 2026 detail):** [`docs/ENHANCEMENT_REPORT.md`](docs/ENHANCEMENT_REPORT.md)
+- Full doc index: [`docs/README.md`](docs/README.md)
+
+---
+
+## Quick Start
 
 ```bash
-cd semantic-product-search
+git clone https://github.com/kaajal-niranjan/search-engine.git
+cd search-engine
 python -m venv .venv
 
 # Windows
 .venv\Scripts\activate
-
 # macOS/Linux
 source .venv/bin/activate
 
 pip install -r requirements.txt
-```
-
-## Quick Start
-
-### 1. Build data, embeddings, index, clusters, and evaluation
-
-```bash
-python scripts/run_pipeline.py
-```
-
-This will:
-- Generate an 800-product synthetic catalog
-- Clean data and write EDA report to `reports/eda_report.txt`
-- Batch-encode embeddings with `all-MiniLM-L6-v2` (cached in `embeddings/`)
-- Build FAISS index
-- Run KMeans + UMAP cluster plot → `visuals/cluster_visualization.png`
-- Evaluate BM25 vs semantic vs hybrid → `reports/evaluation_results.csv`
-
-### 2. Launch Streamlit UI
-
-```bash
+python scripts/run_pipeline.py   # first time (~2–5 min)
 streamlit run app.py
 ```
 
-## Search Modes
+1. Sign in or create an account  
+2. Search with Hybrid / Semantic / BM25 (try autocomplete + history)  
+3. Use filters and Similar Products  
+4. Log out when done  
 
-| Mode | Best for | Example query |
-|------|----------|---------------|
-| **Semantic** | Vague intent, synonyms | "something cozy for better sleep" |
-| **BM25** | Exact tokens, SKUs | "USB-C 65W laptop charger" |
-| **Hybrid** | General production use | "noise cancelling headphones for travel" |
+Cluster plot and evaluation CSV are generated by the pipeline for review (open the files directly).
 
-### Hybrid weighting rationale
+---
 
-- **0.7 semantic** — primary signal for user intent and paraphrases
-- **0.3 BM25** — rescues exact matches (brand, model, rare tokens) that dense retrieval can dilute
+## App Flow
 
-Weights are configurable in code (`HybridSearch`) and in the Streamlit sidebar.
+```
+Open app → Sign in / Create account
+  → Header + Search (autocomplete + mode + filters + history + results + recommendations)
+  → Refresh keeps session (until idle timeout)
+  → Log out → Sign in again
+```
 
-## Evaluation
+---
 
-See `reports/evaluation_report.txt` and `reports/evaluation_results.csv` after running the pipeline.
-
-**Semantic search wins** when users describe needs in natural language without product vocabulary.
-
-**BM25 wins** on precise keyword/SKU-style queries.
-
-**Hybrid** typically offers the best trade-off on mixed queries.
-
-## API Usage (Python)
+## Usage (Python)
 
 ```python
-from src.vector_search import VectorSearch
 from src.hybrid_search import HybridSearch
 from src.recommender import ProductRecommender
+from src.auth import verify_credentials
+
+verify_credentials("admin@valere.io", "your-password")
 
 hybrid = HybridSearch()
-results = hybrid.search(
-    "warm jacket for winter trip",
-    top_k=5,
-    category="Clothing",
-    max_price=200,
-    min_rating=4.0,
-)
+results = hybrid.search("warm jacket for winter trip", top_k=5, max_price=200)
 
 recommender = ProductRecommender()
 similar = recommender.similar_products(product_id=42, top_n=5)
 ```
 
-## Tech Stack
+---
 
-- [Sentence Transformers](https://www.sbert.net/) — `all-MiniLM-L6-v2` (384-dim)
-- [FAISS](https://github.com/facebookresearch/faiss) — inner-product index on normalized vectors (= cosine similarity)
-- [rank-bm25](https://github.com/dorianbrown/rank_bm25) — Okapi BM25
-- [UMAP](https://umap-learn.readthedocs.io/) + [KMeans](https://scikit-learn.org/) — clustering & visualization
-- [Streamlit](https://streamlit.io/) — demo UI
+## Search Modes
 
-## Performance
+| Mode | Best for | Example |
+|------|----------|---------|
+| **Semantic** | Natural-language intent | "something cozy for better sleep" |
+| **BM25** | Exact tokens / SKUs | "USB-C 65W laptop charger" |
+| **Hybrid** | Everyday use (default) | "noise cancelling headphones for travel" |
 
-The app is optimized for fast interaction after the first load:
+---
 
-- **Model warmup** on startup (first load ~3–5s is normal — loading the embedding model)
-- **Query embedding cache** — repeated searches are near-instant
-- **Search on button click** — moving filters no longer re-runs search on every slider change
-- **Lazy page loading** — Clusters/Evaluation pages skip loading the ML model
-- **Faster BM25** — numpy top-k instead of sorting all products
-- **Hybrid** — encodes each query only once (not twice)
+## Evaluation Results
 
-Restart Streamlit after pulling updates:
+| Method | Mean P@5 | Mean P@10 |
+|--------|----------|-----------|
+| BM25 | 0.787 | 0.740 |
+| Semantic | **0.920** | **0.847** |
+| Hybrid | 0.907 | **0.847** |
 
-```powershell
-streamlit run app.py
+See `reports/` after running the pipeline.
+
+---
+
+## Project Structure
+
+```
+search-engine/
+├── app.py                 # Login + search UI
+├── src/                   # Auth, search, ML, clustering, evaluation
+├── scripts/run_pipeline.py
+├── data/                  # Product catalog
+├── embeddings/            # Generated indexes (gitignored)
+├── visuals/               # Cluster plot deliverable
+├── reports/               # EDA + evaluation deliverables
+├── notebooks/
+└── docs/                  # Architecture, DFD, codebase guide, …
 ```
 
+---
 
-MIT — for educational and portfolio use.
+## Documentation
+
+| Doc | Contents |
+|-----|----------|
+| [Codebase Guide](docs/CODEBASE_GUIDE.md) | Folders/files + how inputs are taken |
+| [Architecture](docs/ARCHITECTURE.md) | System diagram (current UI) |
+| [Data Flow](docs/DATA_FLOW.md) | Login → search → pipeline |
+| [Scope & Implementation](docs/SCOPE_AND_IMPLEMENTATION.md) | Brief vs UI scope |
+| [Technical Deep Dive](docs/TECHNICAL_DEEP_DIVE.md) | Review prep |
+| [Enhancements](docs/ENHANCEMENTS.md) | Roadmap |
+| [Enhancement Report](docs/ENHANCEMENT_REPORT.md) | Before/after |
+
+---
+
+## Tech Stack
+
+Sentence Transformers · FAISS · rank-bm25 · Streamlit · scikit-learn · UMAP · pandas/NumPy
+
+---
+
+## License
+
+MIT — educational and portfolio use.
