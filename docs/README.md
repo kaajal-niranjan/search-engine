@@ -5,6 +5,7 @@ Guides for the **current** Semantic Product Search Engine (login/register + sear
 | Document | Description |
 |----------|-------------|
 | [CODEBASE_GUIDE.md](CODEBASE_GUIDE.md) | **Start here** — folders/files, how inputs are taken, UI vs deliverables |
+| [LLM_CATALOG.md](LLM_CATALOG.md) | **Free Ollama catalog** — how it works + how to replace `products_clean.csv` |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System architecture diagram and layers |
 | [DATA_FLOW.md](DATA_FLOW.md) | Login, session, search, history, recommendations, offline pipeline |
 | [SCOPE_AND_IMPLEMENTATION.md](SCOPE_AND_IMPLEMENTATION.md) | Brief requirements vs what the UI shows |

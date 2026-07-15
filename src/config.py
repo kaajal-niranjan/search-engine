@@ -53,5 +53,12 @@ SEARCH_HISTORY_PATH = DATA_DIR / "search_history.json"
 SEARCH_HISTORY_MAX_PER_USER = 20
 SEARCH_SUGGESTION_LIMIT = 25
 
+# Free local LLM catalog generation (Ollama) — build-time only; search UI unchanged
+OLLAMA_BASE_URL = "http://localhost:11434"
+OLLAMA_MODEL = "llama3.2"
+OLLAMA_TIMEOUT_SECONDS = 180
+LLM_CATALOG_DEFAULT_COUNT = 200
+LLM_CATALOG_BATCH_SIZE = 10
+
 # Cached artifacts
 COOCCURRENCE_PATH = EMBEDDINGS_DIR / "cooccurrence.parquet"

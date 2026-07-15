@@ -159,6 +159,7 @@ Dependencies, how to run, ignore `embeddings/` / `visuals/` / venv, etc.
 | `bm25_search.py` | Keyword baseline | Task 3 |
 | `hybrid_search.py` | Blend scores | Task 3 |
 | `filter_engine.py` | Post-ranking Category / Price / Rating filters + Metadata Store | Task 3 |
+| `llm_catalog.py` | Optional free Ollama catalog generation (build-time) | Optional data source |
 | `search_assist.py` | Per-user history + suggestion helpers | Search UX |
 | `search_autocomplete.py` | Streamlit component: under-input suggestions | Search UX |
 | `search_history_list.py` | Streamlit component: sidebar history list | Search UX |

@@ -21,10 +21,12 @@ Future work and what is already done in the **current** codebase.
 | Per-user search history (sidebar) | 15 Jul 2026 |
 | Minimal search-only UI | Matches “simple Streamlit search UI” |
 | Empty-query clears old results | Bugfix |
+| Free Ollama LLM catalog (optional) | Build-time CSV only; search UI unchanged |
 
 Library modules still present (not emphasized in UI): `query_intent.py`, `search_explanation.py`, `search_with_explanation()`.
 
-**Management summary (15 Jul 2026):** see [ENHANCEMENT_REPORT.md](ENHANCEMENT_REPORT.md) Part D.
+**Management summary (15 Jul 2026):** see [ENHANCEMENT_REPORT.md](ENHANCEMENT_REPORT.md) Part D.  
+**Free LLM catalog:** see [LLM_CATALOG.md](LLM_CATALOG.md) and [ENHANCEMENT_REPORT.md](ENHANCEMENT_REPORT.md) Part E.
 
 ---
 

@@ -177,6 +177,25 @@ Task 4/5 cluster plot and evaluation table are **deliverables**, satisfied by:
 
 ---
 
+## Part E — Free LLM Catalog (Ollama, Build-Time Only)
+
+Search UI, hybrid ranking, filters, history, and auth are **unchanged**. A free local LLM can optionally **generate** the product CSV used by the existing pipeline.
+
+| Item | Detail |
+|------|--------|
+| Runtime search | Still FAISS + BM25 + hybrid over `products_clean.csv` |
+| LLM role | Build-time catalog generation only (not per query) |
+| Provider | [Ollama](https://ollama.com) (free, local) — default model `llama3.2` |
+| Script | `python scripts/generate_catalog_llm.py --count 200` |
+| Pipeline | `python scripts/run_pipeline.py --llm-catalog --count 200` |
+| Fallback | Default pipeline (no flag) keeps synthetic catalog |
+
+**Modules:** `src/llm_catalog.py`, `scripts/generate_catalog_llm.py`, config keys `OLLAMA_*` / `LLM_CATALOG_*`
+
+**Full how-to:** [LLM_CATALOG.md](LLM_CATALOG.md)
+
+---
+
 ## Before / After Matrix
 
 | Capability | Original busy UI | Current |
@@ -191,6 +210,7 @@ Task 4/5 cluster plot and evaluation table are **deliverables**, satisfied by:
 | Register + local users | ❌ | ✅ |
 | Session persist / idle logout | ❌ | ✅ |
 | Autocomplete + search history | ❌ | ✅ |
+| Free LLM catalog (Ollama, optional) | ❌ | ✅ (build-time) |
 | Pipeline cluster + eval | ✅ | ✅ |
 
 ---
