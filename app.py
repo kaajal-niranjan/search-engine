@@ -820,6 +820,8 @@ def search_page(
     sem_w = DEFAULT_SEMANTIC_WEIGHT
 
     current_query = str(st.session_state.get("search_query_input") or "")
+    
+    # Render autocomplete component
     ac_result = render_search_autocomplete(
         history=get_search_history(user_email, limit=10),
         product_titles=catalog_titles,
@@ -843,32 +845,36 @@ def search_page(
     should_search = run_pending
     submitted = run_pending
 
-    if should_search and submitted_query:
-        cat_filter = None if category == "All" else category
-        filters = dict(
-            category=cat_filter,
-            min_price=price_min if price_min > price_floor else None,
-            max_price=price_max if price_max < price_ceil else None,
-            min_rating=min_rating if min_rating > 0 else None,
-        )
-        with st.spinner("Searching…"):
-            results = run_search(
-                submitted_query, mode, top_k, sem_w, filters, vector, keyword, hybrid
+    if should_search:
+        if submitted_query:
+            # Non-empty search - execute normally
+            cat_filter = None if category == "All" else category
+            filters = dict(
+                category=cat_filter,
+                min_price=price_min if price_min > price_floor else None,
+                max_price=price_max if price_max < price_ceil else None,
+                min_rating=min_rating if min_rating > 0 else None,
             )
-        st.session_state["search_results"] = results
-        st.session_state["search_query"] = submitted_query
-        add_search_history(user_email, submitted_query)
-        if results:
-            queue_toast(f"Found {len(results)} result(s) for your search.", "success")
+            with st.spinner("Searching…"):
+                results = run_search(
+                    submitted_query, mode, top_k, sem_w, filters, vector, keyword, hybrid
+                )
+            st.session_state["search_results"] = results
+            st.session_state["search_query"] = submitted_query
+            add_search_history(user_email, submitted_query)
+            if results:
+                queue_toast(f"Found {len(results)} result(s) for your search.", "success")
+            else:
+                queue_toast("No products matched your query and filters.", "warning")
+            # Rerun so sidebar history reflects this search immediately
+            st.rerun()
         else:
-            queue_toast("No products matched your query and filters.", "warning")
-        # Rerun so sidebar history reflects this search immediately
-        st.rerun()
-    elif submitted and not submitted_query:
-        # Empty Search clears previous results — do not keep old query/results
-        for key in ("search_results", "search_query", "search_query_input"):
-            st.session_state.pop(key, None)
-        toast_warning("Please enter a search query.")
+            # Empty search - clear results and show notification
+            st.session_state.pop("search_results", None)
+            st.session_state.pop("search_query", None)
+            st.session_state["search_query_input"] = ""
+            queue_toast("Please enter a search query to find products.", "warning")
+            st.rerun()
 
     results: list[SearchResult] = st.session_state.get("search_results", [])
 

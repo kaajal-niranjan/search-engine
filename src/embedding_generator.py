@@ -45,13 +45,24 @@ class EmbeddingGenerator:
         """Lazy-load the sentence transformer model."""
         if self._model is None:
             logger.info("Loading embedding model: %s", self.model_name)
-            self._model = SentenceTransformer(self.model_name)
+            # Try to load from cache first (faster, works offline)
+            try:
+                self._model = SentenceTransformer(self.model_name, local_files_only=True)
+                logger.info("Loaded model from local cache")
+            except Exception:
+                # Fall back to online download if not cached
+                logger.info("Loading model from HuggingFace (may be slow first time)")
+                self._model = SentenceTransformer(self.model_name)
         return self._model
 
     def warmup(self) -> None:
         """Load model and run a dummy encode so first real query is fast."""
-        _ = self.model
-        self.encode_query("__warmup__")
+        try:
+            _ = self.model
+            self.encode_query("__warmup__")
+            logger.info("Model warmed up successfully")
+        except Exception as e:
+            logger.warning("Model warmup failed (will work on first search): %s", e)
 
     def embeddings_exist(self) -> bool:
         """Check if cached embeddings are available."""
